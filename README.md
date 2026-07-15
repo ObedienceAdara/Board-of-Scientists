@@ -14,4 +14,4 @@ The AI Research Implementation Team is dedicated to advancing artificial intelli
 We welcome contributions from researchers, developers, and enthusiasts. If you're interested in joining our efforts, please check our [contributing guidelines](CONTRIBUTING.md).
 
 ## Contact Information
-For inquiries or collaboration opportunities, please reach out to the team lead at [email@example.com].
+For inquiries or collaboration opportunities, please reach out to the team lead at [obedienceadara@gmail.com].
