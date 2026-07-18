@@ -160,19 +160,11 @@ Evaluate against these criteria:
 4. CORRECTNESS — Are there factual errors, mathematical mistakes, or code bugs?
 5. ALIGNMENT — Does this align with the implementation plan and other agents' work?
 
-Return ONLY a JSON object:
-{{
-  "passed":   true or false,
-  "scores": {{
-    "accuracy":     "PASS or FAIL",
-    "completeness": "PASS or FAIL",
-    "depth":        "PASS or FAIL",
-    "correctness":  "PASS or FAIL",
-    "alignment":    "PASS or FAIL"
-  }},
-  "critical_issues": ["list of specific issues that must be fixed"],
-  "feedback": "If failed: precise, technical feedback with specific line references or section references. If passed: empty string."
-}}
+`passed` must be true only if all five criteria pass. If any fail, list every
+specific, must-fix issue in `critical_issues` and give precise, technical,
+actionable feedback (with line/section references) in `feedback` — this is
+the ONLY thing the agent will see when they revise, so be concrete enough
+that a competent redo is actually possible from your feedback alone.
 """
 
 CRO_FINAL_VERDICT_PROMPT = """
@@ -287,6 +279,11 @@ Here are your page-by-page notes:
 {all_page_notes}
 </CONTENT>
 
+Prior feedback on your last submission (if any):
+<CONTENT>
+{prior_feedback}
+</CONTENT>
+
 Now synthesize a complete structured document representation:
 
 1. PAPER OVERVIEW
@@ -331,6 +328,7 @@ Now synthesize a complete structured document representation:
    initialization schemes, data augmentation, regularization.
 
 This document is the ground truth your team will implement from. Be exhaustive and precise.
+If prior feedback was given above, your revised synthesis MUST explicitly resolve every issue raised — do not simply resubmit similar content.
 """
 
 
@@ -357,7 +355,13 @@ Paper Analyst's Structured Notes:
 {analyst_synthesis}
 </CONTENT>
 
+Prior feedback on your last submission (if any):
+<CONTENT>
+{prior_feedback}
+</CONTENT>
+
 Your task: Produce a DEEP THEORETICAL ANALYSIS that your team will use to implement this paper correctly.
+If prior feedback was given above, your revised analysis MUST explicitly resolve every issue raised.
 
 1. MATHEMATICAL FRAMEWORK
    - What branch(es) of mathematics underpin this paper? (e.g., information theory, measure theory, linear algebra, optimization theory, probability theory)
@@ -406,10 +410,9 @@ Your task: Produce a DEEP THEORETICAL ANALYSIS that your team will use to implem
 
 Be rigorous. Be precise. Your analysis is the mathematical backbone of this implementation.
 
-Message to Architect (post to team board):
-After completing your analysis, write a brief message to the ML Architect highlighting
-the top 3 mathematical constraints they MUST honor in the codebase design.
-Format: [MESSAGE TO ARCHITECT]: <your message>
+Also prepare a brief, separate message to the ML Architect highlighting the
+top 3 mathematical constraints they MUST honor in the codebase design — this
+goes in the message_to_architect field, not inline in your analysis.
 """
 
 
@@ -441,7 +444,13 @@ Message from Theorist:
 {theorist_message}
 </CONTENT>
 
+Prior feedback on your last submission (if any):
+<CONTENT>
+{prior_feedback}
+</CONTENT>
+
 Your task: Design a complete, production-quality codebase architecture.
+If prior feedback was given above, your revised design MUST explicitly resolve every issue raised.
 
 1. SYSTEM ARCHITECTURE OVERVIEW
    Draw the complete system as a component diagram (in ASCII art):
@@ -515,10 +524,9 @@ Your task: Design a complete, production-quality codebase architecture.
    - What smoke tests verify each component is correctly shaped?
    - What integration tests verify end-to-end flow?
 
-Message to Senior ML Engineer (post to team board):
-After completing your analysis, write a clear briefing to the Engineer on the
-most critical implementation constraints and where to start.
-Format: [MESSAGE TO ENGINEER]: <your message>
+Also prepare a clear, separate briefing to the Senior ML Engineer on the most
+critical implementation constraints and where to start — this goes in the
+message_to_engineer field, not inline in your analysis.
 """
 
 
@@ -555,9 +563,9 @@ CRO's Implementation Plan:
 {implementation_plan}
 </CONTENT>
 
-Message from Architect:
+Message from your Team (Architect's briefing, Reviewer follow-ups, Experiment Engineer bug reports — anything addressed to you):
 <CONTENT>
-{architect_message}
+{team_inbox}
 </CONTENT>
 
 Previous Code Review Feedback (address ALL points if present):
@@ -565,7 +573,13 @@ Previous Code Review Feedback (address ALL points if present):
 {review_feedback}
 </CONTENT>
 
+Prior CRO feedback on your last submission (if any — address ALL points if present):
+<CONTENT>
+{prior_feedback}
+</CONTENT>
+
 Your task: Implement the complete codebase.
+If prior feedback or bug reports were given above, your revised implementation MUST explicitly fix every issue raised — do not resubmit code with the same problems.
 
 IMPLEMENTATION PRINCIPLES:
 1. FAITHFULNESS — Every architectural detail must match the paper exactly.
@@ -583,22 +597,12 @@ IMPLEMENTATION PRINCIPLES:
 4. COMPLETENESS — Implement EVERY component the paper describes.
    Do not leave TODOs unless you explicitly flag them with [TODO: paper under-specifies this].
 
-For EACH file to implement, produce:
+Produce one file entry per file in the codebase (filename + language + description + complete code —
+plain source only, no markdown fences, no filename comment header, that's what the filename field is for).
 
-```python
-# filename: <filename>
-# Description: <what this file implements>
-# Paper sections: <which sections of the paper this implements>
-
-<complete, runnable Python code>
-```
-
-After each implementation, post a message to the Code Reviewer:
-[MESSAGE TO REVIEWER]: <specific things you want reviewed and why>
-
-Also post a message to the CRO if you encounter anything that contradicts the plan or
-if the paper is ambiguous about something critical:
-[MESSAGE TO CRO]: <the issue and your proposed resolution>
+Also fill in message_to_reviewer (specific things you want reviewed and why) and
+message_to_cro (anything that contradicts the plan or is ambiguous in the paper —
+leave empty if nothing to flag).
 
 Current file to implement: {current_file}
 File specification from Architect: {file_spec}
@@ -637,6 +641,11 @@ Code to Review:
 Message from Engineer:
 <CONTENT>
 {engineer_message}
+</CONTENT>
+
+Prior feedback on your last submission (if any):
+<CONTENT>
+{prior_feedback}
 </CONTENT>
 
 Conduct a THOROUGH code review:
@@ -679,14 +688,12 @@ Conduct a THOROUGH code review:
    - Are there any dangerous patterns (in-place operations breaking autograd, etc.)?
 
 7. OVERALL VERDICT
-   APPROVED / REVISE / MAJOR REVISION REQUIRED
-   With specific list of what must change before approval.
+   Set `verdict` to one of: APPROVED / REVISE / MAJOR REVISION REQUIRED,
+   with the specific list of what must change before approval included in your review.
 
-Post feedback to Engineer:
-[MESSAGE TO ENGINEER]: <specific, actionable feedback>
-
-Post to CRO if you find critical paper misalignments:
-[MESSAGE TO CRO]: <critical issues that need CRO decision>
+Also fill in message_to_engineer (specific, actionable feedback) and
+message_to_cro (critical paper misalignments that need a CRO decision —
+leave empty if nothing critical).
 """
 
 
@@ -713,61 +720,65 @@ All Implemented Code:
 {all_code}
 </CONTENT>
 
-Execution Results:
+MEASURED RESULTS — this block was produced by ACTUALLY EXECUTING the code above
+in a sandbox: real syntax checks, real import attempts, and — where applicable —
+real instantiation/forward-pass smoke tests. Every number and pass/fail status
+in this block is a genuine measurement, not a guess:
 <CONTENT>
 {execution_results}
 </CONTENT>
 
+Prior feedback on your last submission (if any):
+<CONTENT>
+{prior_feedback}
+</CONTENT>
+
 Your task: RIGOROUS VALIDATION
 
-1. SMOKE TESTS
-   Write and run basic tests for each module:
-   - Forward pass with correct input shapes
-   - Output shape verification
-   - Loss computation (should be finite and positive)
-   - Gradient flow check (no NaN/Inf gradients)
+CRITICAL LABELING RULE — read this before writing anything:
+The MEASURED RESULTS block above is the ONLY source of ground truth in this
+prompt. You do not have the ability to actually train the model or reproduce
+the paper's reported metrics (accuracy, loss curves, benchmark scores) — no
+training run happened. Any statement in your analysis that is NOT copied
+directly from MEASURED RESULTS — including anything about results-table
+comparisons, ablations, edge cases, or performance/memory profiling — is your
+professional estimate, not a measurement, and MUST be prefixed with
+"[LLM-INFERRED]". Never write a number as if it were observed when it was not
+actually run. If you don't know, say "[LLM-INFERRED] cannot be determined
+without an actual training run."
 
-   For each test, show:
-   - Test code
-   - Expected result
-   - Actual result
-   - PASS / FAIL
+1. WHAT WAS ACTUALLY VERIFIED (from MEASURED RESULTS only)
+   - Which files have valid syntax, which don't, and why.
+   - Which files imported successfully, which didn't, and the real error for each failure.
+   - Which classes were found, and what the instantiation/forward-pass smoke test showed.
+   Report this section as plain fact — it is measured, not estimated.
 
-2. RESULTS COMPARISON
-   For every result table/figure in the paper:
-   - What does the paper report? (exact numbers)
-   - What does our implementation produce? (exact numbers)
-   - Discrepancy: (difference and percentage)
-   - Likely cause if discrepancy > 2%
+2. RESULTS COMPARISON [LLM-INFERRED]
+   For every result table/figure in the paper, estimate — clearly tagged
+   [LLM-INFERRED] — how the implementation likely compares based on a code
+   read-through, since no training run was performed.
 
-3. ABLATION VERIFICATION
-   If the paper includes ablation studies:
-   - Implement each ablation
-   - Compare results to paper's ablation table
+3. ABLATION & EDGE CASE ANALYSIS [LLM-INFERRED]
+   Reason about likely behavior under ablations / edge cases from reading the
+   code — tagged [LLM-INFERRED] throughout.
 
-4. EDGE CASE TESTING
-   - Test with minimum batch size (1)
-   - Test with maximum sequence length
-   - Test with zero/empty inputs
-   - Test numerical edge cases
+4. PERFORMANCE PROFILING [LLM-INFERRED]
+   Rough complexity/memory reasoning from reading the code — tagged
+   [LLM-INFERRED]. Do not invent specific throughput/memory numbers.
 
-5. PERFORMANCE PROFILING
-   - Memory usage (peak GPU/CPU memory)
-   - Training throughput (samples/second)
-   - Compare to any efficiency claims in the paper
-
-6. DISCREPANCY REPORT
-   For every discrepancy found:
-   - What the paper claims
-   - What we observe
+5. DISCREPANCY REPORT
+   For every real issue found (measured import/syntax failures first, then
+   inferred concerns clearly tagged):
+   - What was found (measured or inferred — say which)
    - Root cause hypothesis
    - Recommended fix
 
-Post findings to CRO:
-[MESSAGE TO CRO]: <summary of validation results and critical discrepancies>
+If prior feedback was given above, explicitly confirm whether the previously
+reported bugs are resolved in the current MEASURED RESULTS.
 
-Post to Engineer if bugs found:
-[MESSAGE TO ENGINEER]: <specific bugs to fix with reproduction steps>
+Also fill in message_to_cro (summary of validation results and critical
+discrepancies) and message_to_engineer (specific bugs to fix with
+reproduction steps — leave empty if the measured results are clean).
 """
 
 
@@ -799,32 +810,35 @@ Full Codebase Structure:
 {codebase_structure}
 </CONTENT>
 
-Validation Report:
+Validation Report (any claim tagged [LLM-INFERRED] there was NOT measured by
+actually running the code — preserve that distinction, do not launder an
+inferred number into the README as if it were a verified result):
 <CONTENT>
 {validation_report}
 </CONTENT>
 
-CRO's Final Verdict:
+Prior feedback on your last submission (if any):
 <CONTENT>
-{final_verdict}
+{prior_feedback}
 </CONTENT>
 
-Produce TWO documents:
+Produce TWO documents (fill the readme_md and implementation_notes_md fields).
+If prior feedback was given above, your revision MUST explicitly resolve every issue raised.
 
-DOCUMENT 1 — README.md
-Include:
+readme_md should include:
 - Project title and paper citation (with arxiv link if findable)
 - One-paragraph description of what the paper proposes
 - Requirements and installation instructions
 - Quick start (5 lines to get a training run going)
 - Full usage guide with examples
 - Configuration options (all hyperparameters)
-- Results comparison table (our results vs paper's results)
+- Results: report only what the Validation Report actually measured (syntax/import/
+  instantiation checks); anything else must keep its [LLM-INFERRED] tag or be omitted —
+  do not present an inferred number as a verified result
 - Implementation notes (any deviations from the paper and why)
 - Citation block
 
-DOCUMENT 2 — IMPLEMENTATION_NOTES.md
-Include:
+implementation_notes_md should include:
 - Mathematical notation guide (every symbol used in the code)
 - Architecture walkthrough (how the components connect)
 - Implementation decisions (every place where the paper was ambiguous and how we resolved it)

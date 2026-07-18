@@ -24,10 +24,16 @@ class CodeModule(TypedDict):
 
 
 class AgentMessage(TypedDict):
-    sender:    str
-    recipient: str   # agent name or "ALL"
-    content:   str
-    message_type: str  # "question" / "insight" / "concern" / "answer"
+    # sender/recipient are CANONICAL AGENT KEYS (see agent_registry.py), e.g.
+    # "engineer", "reviewer", "all" — never human display names. Routing
+    # (get_messages_for) matches on these keys. Display names are looked up
+    # from the registry only when rendering something for a human to read.
+    sender:         str
+    recipient:      str
+    sender_name:    str   # human-readable, for logs/reports only
+    recipient_name: str   # human-readable, for logs/reports only
+    content:        str
+    message_type:   str  # "insight" / "concern" / "question" / "answer" / "directive" / "feedback"
 
 
 class ResearchState(TypedDict):
@@ -42,6 +48,9 @@ class ResearchState(TypedDict):
     figures_summary:      str    # all figures described
     tables_summary:       str    # all tables described
     equations_summary:    str    # all equations extracted
+    page_notes:           str    # joined per-page analyst notes — persisted so a
+                                  # revision can redo just the synthesis with CRO
+                                  # feedback instead of re-reading the whole PDF
 
     # ── Phase 1: Deep Analysis ──────────────────────────────
     theoretical_analysis: str    # Theorist's deep mathematical breakdown
@@ -55,11 +64,20 @@ class ResearchState(TypedDict):
     # ── Phase 3: Implementation ─────────────────────────────
     code_modules:         dict   # { filename: CodeModule }
     review_feedback:      dict   # { filename: review_notes }
+    review_summary:       str    # latest full review text — this is what the CRO
+                                  # actually evaluates (previously the CRO evaluated
+                                  # a key, "review_feedback_str", that was never set,
+                                  # i.e. it always evaluated an empty string)
     implementation_notes: str    # Engineer's notes during implementation
 
     # ── Phase 4: Validation ─────────────────────────────────
-    execution_results:    str    # Experiment Engineer's run results
-    validation_report:    str    # Comparison against paper's reported results
+    execution_results:    str    # human-readable rendering of the REAL, measured
+                                  # sandbox execution results (syntax/import/
+                                  # instantiation checks) — never LLM-invented
+    measured_validation:  dict   # the raw structured measurement dict itself
+    validation_report:    str    # Experiment Engineer's write-up. Anything in here
+                                  # not sourced from measured_validation must be
+                                  # tagged [LLM-INFERRED] by the agent.
     discrepancies:        str    # What doesn't match and why
 
     # ── Phase 5: Documentation ──────────────────────────────
