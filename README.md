@@ -26,7 +26,8 @@ python main.py serve                    # REST API on :8000 (see env.example for
 See `env.example` for the full list of environment variables, including
 per-agent model overrides and REST API configuration (`API_AUTH_TOKEN`,
 `UPLOADS_DIR`). See `FIXES.md` for a detailed record of recent bug fixes to
-this codebase.
+this codebase, and `FEATURES.md` for the iterative per-file code generation
+and unbounded-length paper analysis added since.
 
 ## Contact Information
 For inquiries or collaboration opportunities, please reach out to the team lead at [obedienceadara@gmail.com].

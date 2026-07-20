@@ -269,14 +269,44 @@ Extract and structure EVERYTHING on this page:
 Be exhaustive. Nothing on this page should be missed.
 """
 
+ANALYST_REDUCE_PROMPT = """
+You are Dr. Marcus Webb, consolidating your own research notes on "{paper_title}".
+
+{security_instruction}
+
+Below are several of your own notes, each covering a different batch of pages
+(or, if this is a later consolidation pass, several already-consolidated
+summaries covering earlier ranges of pages):
+<CONTENT>
+{notes_chunk}
+</CONTENT>
+
+Merge these into ONE consolidated note that preserves EVERY piece of
+technical substance from all of them — do not summarize-away detail. Specifically:
+
+- Keep every equation, with its number/label, exact form, and variable definitions.
+- Keep every figure/table reference and the numbers it reports.
+- Keep every architectural/implementation-critical detail (dimensions, activation
+  functions, hyperparameters, initialization, data augmentation, etc.).
+- Keep every open question or ambiguity noted.
+- Where two notes describe the same concept from different angles, merge them
+  into one coherent description rather than repeating both.
+- Preserve page/section references so later readers can trace claims back to
+  the source.
+
+This is a compression-of-redundancy pass, not a compression-of-content pass —
+the output should be shorter than the input notes combined ONLY because
+duplication and filler are removed, never because technical detail was cut.
+"""
+
 ANALYST_SYNTHESIS_PROMPT = """
 You are Dr. Marcus Webb. You have now read every page of the paper "{paper_title}".
 
 {security_instruction}
 
-Here are your page-by-page notes:
+Here are your page-by-page notes, consolidated (see note below on how):
 <CONTENT>
-{all_page_notes}
+{consolidated_notes}
 </CONTENT>
 
 Prior feedback on your last submission (if any):
@@ -284,7 +314,11 @@ Prior feedback on your last submission (if any):
 {prior_feedback}
 </CONTENT>
 
-Now synthesize a complete structured document representation:
+Now synthesize a complete structured document representation. Note: for long
+papers, the notes above are the result of a hierarchical merge of your
+original page-by-page notes (see ANALYST_REDUCE_PROMPT) rather than every
+single page note verbatim — treat them as equally authoritative; no
+technical content was intentionally dropped in that process.
 
 1. PAPER OVERVIEW
    - Full title and authors (if found)
@@ -524,6 +558,17 @@ If prior feedback was given above, your revised design MUST explicitly resolve e
    - What smoke tests verify each component is correctly shaped?
    - What integration tests verify end-to-end flow?
 
+Also populate the file_manifest field: one entry per file listed in your
+COMPLETE FILE STRUCTURE above, IN DEPENDENCY ORDER (a file must come after
+every file listed in its own depends_on). This is what the Engineer will
+actually iterate over — one file (or small group) implemented per pass, in
+this order — so each description must be specific enough to implement from
+alone: exact class/function names, shapes, and which paper section it
+covers. Only set `group` for small, genuinely-coupled files (e.g. a config
+module + its constants module); leave it empty for anything substantial —
+most files, especially anything with real logic, should be implemented on
+their own so the Engineer's full attention goes to one file at a time.
+
 Also prepare a clear, separate briefing to the Senior ML Engineer on the most
 critical implementation constraints and where to start — this goes in the
 message_to_engineer field, not inline in your analysis.
@@ -578,7 +623,25 @@ Prior CRO feedback on your last submission (if any — address ALL points if pre
 {prior_feedback}
 </CONTENT>
 
-Your task: Implement the complete codebase.
+Full code of files you depend on (already implemented — match their exact
+names, signatures, and return types; do not redefine anything already
+defined here):
+<CONTENT>
+{dependency_context}
+</CONTENT>
+
+Rest of the project for situational awareness (filename: description —
+already implemented unless marked [PENDING]; you do not need their code
+unless listed as a dependency above):
+<CONTENT>
+{manifest_context}
+</CONTENT>
+
+Your task: implement ONLY the file(s) listed below as "Files to implement now"
+— NOT the whole codebase. The rest of the codebase is being implemented in
+separate passes, one file (or small group) at a time, in dependency order;
+this keeps every pass focused and lets you use each file's full output
+budget instead of splitting it across the whole project.
 If prior feedback or bug reports were given above, your revised implementation MUST explicitly fix every issue raised — do not resubmit code with the same problems.
 
 IMPLEMENTATION PRINCIPLES:
@@ -594,18 +657,25 @@ IMPLEMENTATION PRINCIPLES:
    Watch for: broadcasting errors, dimension mismatches, gradient flow issues,
    numerical instability in softmax/log/exp operations.
 
-4. COMPLETENESS — Implement EVERY component the paper describes.
+4. COMPLETENESS — Implement EVERY component this file is specified to contain.
    Do not leave TODOs unless you explicitly flag them with [TODO: paper under-specifies this].
 
-Produce one file entry per file in the codebase (filename + language + description + complete code —
+5. CONSISTENCY — Match the exact names/signatures of anything you import from
+   the dependency files above. Do not invent a different signature for
+   something that's already implemented.
+
+Produce one file entry per file listed below (filename + language + description + complete code —
 plain source only, no markdown fences, no filename comment header, that's what the filename field is for).
 
 Also fill in message_to_reviewer (specific things you want reviewed and why) and
 message_to_cro (anything that contradicts the plan or is ambiguous in the paper —
 leave empty if nothing to flag).
 
-Current file to implement: {current_file}
-File specification from Architect: {file_spec}
+Files to implement now:
+{current_file}
+
+Specification for each (from the Architect's file_manifest):
+{file_spec}
 """
 
 

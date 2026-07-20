@@ -54,10 +54,19 @@ class CodeFile(BaseModel):
 
 
 class EngineerOutput(BaseModel):
-    """Everything the Senior ML Engineer produces in one implementation pass."""
-    files: List[CodeFile] = Field(description="Every code file produced or updated in this pass. At least one file.")
+    """
+    Everything the Senior ML Engineer produces in ONE implementation pass.
+
+    A "pass" is one file, or a small group of tightly-coupled files sharing
+    an Architect-assigned `group` label — see FileSpec. The Engineer is
+    called once per batch in the Architect's file_manifest (in dependency
+    order), not once for the entire codebase — this replaced a single
+    monolithic call that reliably ran out of output length on any
+    nontrivial paper.
+    """
+    files: List[CodeFile] = Field(description="Every code file produced in this pass (usually one, occasionally a small batch). At least one file.")
     implementation_notes: str = Field(
-        default="", description="Summary of what was implemented, key design decisions, and any [TODO: ...] flags left for the CRO."
+        default="", description="Summary of what was implemented in this pass, key design decisions, and any [TODO: ...] flags left for the CRO."
     )
     message_to_reviewer: str = Field(default="", description="Specific things to review and why. Empty string if nothing specific.")
     message_to_cro: str = Field(default="", description="Concerns, ambiguities, or plan deviations to flag to the CRO. Empty string if none.")
@@ -89,9 +98,56 @@ class TheoristOutput(BaseModel):
     )
 
 
+class FileSpec(BaseModel):
+    """One file in the Architect's implementation manifest."""
+    filename: str = Field(
+        description=(
+            "Relative file path, e.g. 'models/backbone.py'. Never an "
+            "absolute path, never contains '..'."
+        )
+    )
+    description: str = Field(
+        description=(
+            "Specific implementation spec for this file: exact classes/"
+            "functions to define, key algorithms, and which paper "
+            "section(s) it implements. Be concrete enough that the Engineer "
+            "could implement this file from this description alone."
+        )
+    )
+    depends_on: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Filenames (from elsewhere in this same manifest) that this "
+            "file imports from or must stay consistent with — e.g. a "
+            "trainer.py that depends on models/backbone.py. Leave empty "
+            "for standalone files (configs, constants, utilities)."
+        ),
+    )
+    group: str = Field(
+        default="",
+        description=(
+            "Optional batch label. Files sharing the same non-empty group "
+            "are implemented together in a single pass — use ONLY for "
+            "small, tightly-coupled files (e.g. a config module and a "
+            "constants module). Leave empty for anything substantial; "
+            "most files should be implemented on their own."
+        ),
+    )
+
+
 class ArchitectOutput(BaseModel):
     """The ML Architect's system design."""
     analysis: str = Field(description="The full architecture design, in markdown, covering every section requested in the prompt.")
+    file_manifest: List[FileSpec] = Field(
+        description=(
+            "Every file to be implemented, IN DEPENDENCY ORDER (files with "
+            "no dependencies first, so each file's dependencies are always "
+            "already implemented by the time it's the Engineer's turn). "
+            "This is what the Engineer iterates over — one file (or small "
+            "group) per implementation pass — instead of writing the whole "
+            "codebase in one shot."
+        )
+    )
     message_to_engineer: str = Field(
         default="", description="A clear briefing to the Engineer on the most critical implementation constraints and where to start."
     )

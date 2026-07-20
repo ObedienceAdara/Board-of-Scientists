@@ -48,13 +48,23 @@ class ResearchState(TypedDict):
     figures_summary:      str    # all figures described
     tables_summary:       str    # all tables described
     equations_summary:    str    # all equations extracted
-    page_notes:           str    # joined per-page analyst notes — persisted so a
-                                  # revision can redo just the synthesis with CRO
-                                  # feedback instead of re-reading the whole PDF
+    page_notes:           str    # human-readable joined per-page analyst notes (debug/log use)
+    page_notes_list:      list   # list[str] — the individual per-batch notes, kept
+                                  # separately (not just joined) so both a CRO-triggered
+                                  # revision AND the hierarchical reduce step can re-run
+                                  # without re-reading the whole PDF. This is also what
+                                  # let the old hard 40-page cap be removed: an arbitrarily
+                                  # long list of notes gets recursively merged down to a
+                                  # handful of consolidated summaries (map-reduce) instead
+                                  # of being joined into one giant string and truncated.
 
     # ── Phase 1: Deep Analysis ──────────────────────────────
     theoretical_analysis: str    # Theorist's deep mathematical breakdown
     architecture_analysis: str   # Architect's structural breakdown
+    file_manifest:         list  # list[FileSpec-as-dict] — the Architect's file-by-file
+                                  # implementation plan, in dependency order. The Engineer
+                                  # iterates this one file (or small group) at a time
+                                  # instead of writing the whole codebase in one call.
 
     # ── Phase 2: CRO Synthesis ──────────────────────────────
     cro_reading_notes:    str    # CRO's own reading notes on the paper

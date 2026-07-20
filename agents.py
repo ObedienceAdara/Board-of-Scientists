@@ -56,6 +56,7 @@ from prompts import (
     CRO_EVALUATE_PROMPT,
     CRO_FINAL_VERDICT_PROMPT,
     ANALYST_PAGE_PROMPT,
+    ANALYST_REDUCE_PROMPT,
     ANALYST_SYNTHESIS_PROMPT,
     THEORIST_PROMPT,
     ARCHITECT_PROMPT,
@@ -261,21 +262,76 @@ def increment_revision(state: ResearchState, agent_key: str) -> dict:
 # PHASE 0: PAPER ANALYST
 # ══════════════════════════════════════════════════════════════
 
+# How many notes get merged into one consolidated note per reduce step.
+# Lower = more, cheaper LLM calls per level but a deeper tree for very long
+# papers; higher = fewer levels but each reduce call handles more content.
+ANALYST_REDUCE_FANOUT = int(os.getenv("ANALYST_REDUCE_FANOUT", "6"))
+
+# THE FIX: the old code silently stopped reading at page 40 — anything after
+# that was never seen by the per-page analysis at all, no warning given. This
+# is now a generous, loudly-logged safety valve against a truly pathological
+# input (e.g. someone pointing this at a 2000-page PDF by mistake) rather
+# than a quality-limiting cap that fires on any real survey paper or anything
+# with substantial appendices.
+ANALYST_MAX_PAGES = int(os.getenv("ANALYST_MAX_PAGES", "300"))
+
+
+def _hierarchical_reduce(notes: list, paper_title: str, model: str) -> str:
+    """
+    Recursively merge a list of textual notes into fewer, denser notes until
+    there are few enough (<= ANALYST_REDUCE_FANOUT) to hand directly to the
+    final synthesis prompt.
+
+    THE FIX this powers: the old code joined every page-batch note into one
+    giant string and relied on sanitize_prompt_input's hard truncation
+    (12000 chars) to keep it prompt-sized — for anything beyond ~40 pages,
+    later notes were silently cut off entirely before the model ever saw
+    them. A real map-reduce tree scales to a paper of any length: each level
+    only ever has to summarize ANALYST_REDUCE_FANOUT documents at a time, so
+    the per-call context size is constant regardless of paper length; only
+    the number of reduce calls (and therefore cost) grows with length.
+    """
+    if len(notes) <= ANALYST_REDUCE_FANOUT:
+        return "\n\n===SECTION===\n\n".join(notes)
+
+    llm = make_llm(model)
+    prompt = ChatPromptTemplate.from_template(ANALYST_REDUCE_PROMPT)
+    chain = prompt | llm | parser
+
+    reduced = []
+    num_chunks = (len(notes) + ANALYST_REDUCE_FANOUT - 1) // ANALYST_REDUCE_FANOUT
+    for chunk_idx, i in enumerate(range(0, len(notes), ANALYST_REDUCE_FANOUT), start=1):
+        chunk = notes[i:i + ANALYST_REDUCE_FANOUT]
+        chunk_text = "\n\n===NOTE===\n\n".join(chunk)
+        print(f"   🔀 Consolidating {len(chunk)} notes into 1 (chunk {chunk_idx}/{num_chunks})...")
+        summary = chain.invoke({
+            "paper_title":   paper_title,
+            "notes_chunk":   sanitize_prompt_input(chunk_text, 12000),
+            "security_instruction": CONTENT_DELIMITER_INSTRUCTION,
+        })
+        reduced.append(summary)
+
+    return _hierarchical_reduce(reduced, paper_title, model)
+
+
 def analyst_agent(state: ResearchState) -> ResearchState:
     print("\n📖 Paper Analyst — Reading PDF page by page...")
 
     prior_feedback = format_prior_feedback(state, ANALYST)
-    is_revision = bool(state.get("page_notes")) and bool(state.get("paper_title"))
+    is_revision = bool(state.get("page_notes_list")) and bool(state.get("paper_title"))
 
     if is_revision:
         # A revision — the paper hasn't changed, only the synthesis needs to
         # improve. Reuse the already-persisted page notes instead of paying
-        # for ~9 LLM calls to re-read a PDF that didn't change, and let the
-        # CRO's feedback (finally wired in — see format_prior_feedback) drive
-        # a better synthesis this time.
-        print("   ♻️  Revision — reusing prior page notes, redoing synthesis with CRO feedback...")
+        # for potentially dozens of LLM calls to re-read a PDF that didn't
+        # change, and let the CRO's feedback (finally wired in — see
+        # format_prior_feedback) drive a better synthesis this time. The
+        # hierarchical reduce below still re-runs (cheap relative to the
+        # page-by-page map phase) so a changed prior_feedback can plausibly
+        # shift what the consolidation emphasizes too.
+        print("   ♻️  Revision — reusing prior page notes, redoing reduce + synthesis with CRO feedback...")
         paper_title = state.get("paper_title", "")
-        page_notes_joined = state.get("page_notes", "")
+        page_notes_list = state.get("page_notes_list", [])
         pages = state.get("raw_pages", [])
         full_text = state.get("full_paper_text", "")
         equations_summary = state.get("equations_summary", "")
@@ -293,17 +349,23 @@ def analyst_agent(state: ResearchState) -> ResearchState:
         print(f"   📄 Pages detected: {len(pages)}")
         print(f"   📄 Sections detected: {len(metadata['sections'])}")
 
-        all_page_notes = []
+        if len(pages) > ANALYST_MAX_PAGES:
+            print(f"   ⚠️  Paper has {len(pages)} pages, exceeding ANALYST_MAX_PAGES={ANALYST_MAX_PAGES}.")
+            print(f"   ⚠️  Reading the first {ANALYST_MAX_PAGES} pages only. Raise ANALYST_MAX_PAGES to read more.")
+        pages_to_read = pages[:ANALYST_MAX_PAGES]
+
+        page_notes_list = []
         previous_context = "This is the beginning of the paper."
         llm = make_llm(ANALYST_MODEL)
 
         batch_size = 5
-        for i in range(0, min(len(pages), 40), batch_size):   # Cap at 40 pages
-            batch = pages[i:i + batch_size]
+        num_batches = (len(pages_to_read) + batch_size - 1) // batch_size
+        for batch_idx, i in enumerate(range(0, len(pages_to_read), batch_size), start=1):
+            batch = pages_to_read[i:i + batch_size]
             batch_text = "\n\n--- PAGE BREAK ---\n\n".join(
                 f"[PAGE {p['page']}]\n{p['text']}" for p in batch
             )
-            print(f"   📖 Analyzing pages {batch[0]['page']}–{batch[-1]['page']}...")
+            print(f"   📖 Analyzing pages {batch[0]['page']}–{batch[-1]['page']} (batch {batch_idx}/{num_batches})...")
 
             prompt = ChatPromptTemplate.from_template(ANALYST_PAGE_PROMPT)
             chain  = prompt | llm | parser
@@ -314,22 +376,25 @@ def analyst_agent(state: ResearchState) -> ResearchState:
                 "previous_context": sanitize_prompt_input(previous_context[-1000:], 1000),
                 "security_instruction": CONTENT_DELIMITER_INSTRUCTION,
             })
-            all_page_notes.append(notes)
+            page_notes_list.append(notes)
             previous_context = notes[-500:]
 
-        page_notes_joined = "\n\n===PAGE BATCH===\n\n".join(all_page_notes)
         full_text = "\n\n".join(p["text"] for p in pages)
         all_equations = extract_equations(full_text)
         equations_summary = "\n".join(f"Line {eq['line']}: {eq['content']}" for eq in all_equations[:50])
+
+    if len(page_notes_list) > ANALYST_REDUCE_FANOUT:
+        print(f"   🔀 Reducing {len(page_notes_list)} page-batch notes down to <= {ANALYST_REDUCE_FANOUT} via hierarchical merge...")
+    consolidated_notes = _hierarchical_reduce(page_notes_list, paper_title, ANALYST_MODEL) if page_notes_list else ""
 
     print("   🔗 Synthesizing full paper analysis...")
     llm = make_llm(ANALYST_MODEL)
     synthesis_prompt = ChatPromptTemplate.from_template(ANALYST_SYNTHESIS_PROMPT)
     synthesis_chain  = synthesis_prompt | llm | parser
     synthesis = synthesis_chain.invoke({
-        "paper_title":    paper_title,
-        "all_page_notes": sanitize_prompt_input(page_notes_joined, 12000),
-        "prior_feedback": sanitize_prompt_input(prior_feedback, 2000),
+        "paper_title":         paper_title,
+        "consolidated_notes":  sanitize_prompt_input(consolidated_notes, 20000),
+        "prior_feedback":      sanitize_prompt_input(prior_feedback, 2000),
         "security_instruction": CONTENT_DELIMITER_INSTRUCTION,
     })
 
@@ -347,7 +412,8 @@ def analyst_agent(state: ResearchState) -> ResearchState:
         "raw_pages":         pages,
         "full_paper_text":   sanitize_prompt_input(full_text, 15000),
         "equations_summary": equations_summary,
-        "page_notes":        page_notes_joined,
+        "page_notes":        "\n\n===PAGE BATCH===\n\n".join(page_notes_list),
+        "page_notes_list":   page_notes_list,
         "research_report":   synthesis,
         "message_board":     board,
         "revision_counts":   rc,
@@ -548,6 +614,40 @@ def theorist_agent(state: ResearchState) -> ResearchState:
 # ML ARCHITECT
 # ══════════════════════════════════════════════════════════════
 
+def _sanitize_manifest(file_manifest: list) -> list:
+    """
+    Convert the Architect's structured file_manifest (a list of FileSpec
+    Pydantic objects) into safe, deduplicated plain dicts for storage in
+    state: filenames go through the same sanitize_relative_path() used for
+    on-disk output and sandbox validation (so a manifest entry can never
+    request a path-traversal write), duplicate filenames keep only the
+    first occurrence, and depends_on references to filenames not actually
+    in the manifest are dropped rather than trusted blindly.
+    """
+    seen = set()
+    sanitized = []
+    for spec in file_manifest:
+        raw = spec.model_dump() if hasattr(spec, "model_dump") else dict(spec)
+        filename = sanitize_relative_path(raw.get("filename", ""))
+        if filename in seen or filename == "unnamed_module.py":
+            continue
+        seen.add(filename)
+        sanitized.append({
+            "filename":    filename,
+            "description": raw.get("description", ""),
+            "depends_on":  list(raw.get("depends_on") or []),
+            "group":       (raw.get("group") or "").strip(),
+        })
+
+    valid_names = {s["filename"] for s in sanitized}
+    for s in sanitized:
+        s["depends_on"] = [
+            sanitize_relative_path(d) for d in s["depends_on"]
+            if sanitize_relative_path(d) in valid_names and sanitize_relative_path(d) != s["filename"]
+        ]
+    return sanitized
+
+
 def architect_agent(state: ResearchState) -> ResearchState:
     print("\n🏗️  ML Architect — Designing codebase structure...")
 
@@ -568,17 +668,22 @@ def architect_agent(state: ResearchState) -> ResearchState:
             ArchitectOutput,
         )
         analysis, eng_message = result.analysis, result.message_to_engineer
+        file_manifest = _sanitize_manifest(result.file_manifest)
     except StructuredOutputError as e:
         print(f"   ⚠️  Structured output failed twice: {e}")
         analysis = f"[STRUCTURED OUTPUT FAILED after 2 attempts: {e}]"
         eng_message = ""
+        file_manifest = []
+
+    print(f"   📋 File manifest: {len(file_manifest)} files planned"
+          + ("" if file_manifest else " (none — Engineer will fall back to a single pass)"))
 
     # Previously this posted to recipient "Senior ML Engineer" while the
     # Engineer looked itself up as "engineer" — never matching. Now both
     # sides use the same canonical ENGINEER key.
     board = post_message(
         state, ARCHITECT, ENGINEER,
-        eng_message or "Architecture design complete. See codebase_structure in state.",
+        eng_message or "Architecture design complete. See codebase_structure and file_manifest in state.",
         "directive",
     )
 
@@ -587,6 +692,7 @@ def architect_agent(state: ResearchState) -> ResearchState:
         **state,
         "architecture_analysis": analysis,
         "codebase_structure":    analysis,
+        "file_manifest":         file_manifest,
         "message_board":         board,
         "revision_counts":       rc,
     }
@@ -596,69 +702,196 @@ def architect_agent(state: ResearchState) -> ResearchState:
 # SENIOR ML ENGINEER
 # ══════════════════════════════════════════════════════════════
 
+# Hard cap on files per implementation pass, even if the Architect assigns
+# the same `group` label to more files than this — a `group` label
+# shouldn't be able to silently recreate the old "write everything in one
+# call" problem.
+ENGINEER_MAX_BATCH_SIZE = int(os.getenv("ENGINEER_MAX_BATCH_SIZE", "4"))
+ENGINEER_DEPENDENCY_CONTEXT_BUDGET = 6000  # chars, shared across all dependency files in one call
+
+
+def _build_batches(manifest: list) -> list:
+    """
+    Group the Architect's file_manifest into implementation passes, in
+    manifest order (the Architect is instructed to put the manifest in
+    dependency order). Consecutive entries sharing the same non-empty
+    `group` label are implemented together in one pass — intended only for
+    small, tightly-coupled files; everything else is implemented on its own,
+    one file per LLM call, each with the model's full output budget instead
+    of it being split across the whole project.
+    """
+    batches = []
+    current_group = None
+    current_batch = []
+
+    def flush():
+        nonlocal current_batch
+        for i in range(0, len(current_batch), ENGINEER_MAX_BATCH_SIZE):
+            batches.append(current_batch[i:i + ENGINEER_MAX_BATCH_SIZE])
+        current_batch = []
+
+    for entry in manifest:
+        group = entry.get("group") or ""
+        if group and group == current_group:
+            current_batch.append(entry)
+        else:
+            flush()
+            current_batch = [entry]
+            current_group = group or None
+    flush()
+    return batches
+
+
+def _build_dependency_context(code_modules: dict, batch: list, budget: int = ENGINEER_DEPENDENCY_CONTEXT_BUDGET) -> str:
+    """Full code of every already-implemented file this batch's entries declared a dependency on."""
+    dep_names = []
+    for entry in batch:
+        for d in entry.get("depends_on", []):
+            if d not in dep_names:
+                dep_names.append(d)
+
+    if not dep_names:
+        return "This file/batch has no declared dependencies on other project files."
+
+    per_file_budget = max(budget // len(dep_names), 500)
+    parts = []
+    for name in dep_names:
+        mod = code_modules.get(name)
+        if not mod:
+            parts.append(
+                f"# === {name} ===\n[NOT YET IMPLEMENTED — this dependency hasn't been generated "
+                f"yet, which shouldn't happen if the manifest is in correct dependency order; "
+                f"implement this file's needs conservatively / flag it via message_to_cro]"
+            )
+            continue
+        code = mod.get("code", "") if isinstance(mod, dict) else str(mod)
+        parts.append(f"# === {name} ===\n{sanitize_prompt_input(code, per_file_budget)}")
+    return "\n\n".join(parts)
+
+
+def _build_manifest_context(manifest: list, code_modules: dict, batch_filenames: set) -> str:
+    """Brief filename: description listing of the rest of the project, marking what's already implemented vs pending."""
+    lines = []
+    for entry in manifest:
+        name = entry["filename"]
+        if name in batch_filenames:
+            continue
+        status = "done" if name in code_modules else "PENDING"
+        lines.append(f"- {name} [{status}]: {entry.get('description', '')[:150]}")
+    return "\n".join(lines) if lines else "No other files in the manifest."
+
+
 def engineer_agent(state: ResearchState) -> ResearchState:
     print("\n💻 Senior ML Engineer — Implementing codebase...")
 
-    # Now actually populated: previously get_messages_for(state, "engineer")
-    # never matched anything because messages were addressed to
-    # "Senior ML Engineer" — a display name, not the lookup key.
+    # THE FIX: the Engineer used to be asked to write the ENTIRE codebase in
+    # a single completion ("current_file": "ALL FILES") — reliably too much
+    # for one output on any nontrivial paper, which is why so much of the
+    # rest of this file used to exist just to parse whatever partial/broken
+    # result came back. Now it iterates the Architect's file_manifest one
+    # file (or small, Architect-grouped batch) at a time, in dependency
+    # order, giving each pass the full code of whatever it depends on.
+    manifest = state.get("file_manifest", [])
+    batches = _build_batches(manifest) if manifest else []
+
+    if not batches:
+        print("   ⚠️  No file manifest available — falling back to a single implementation pass.")
+        batches = [[{
+            "filename": "ALL FILES",
+            "description": "Implement the complete codebase as designed in codebase_structure.",
+            "depends_on": [],
+            "group": "",
+        }]]
+
+    print(f"   📋 {len(batches)} implementation pass(es) covering {sum(len(b) for b in batches)} file(s)")
+
+    # Read once up front, not per-batch — previously get_messages_for(state,
+    # "engineer") never matched anything because messages were addressed to
+    # "Senior ML Engineer", a display name, not the lookup key.
     team_inbox = get_messages_for(state, ENGINEER)
     review_feedback = json.dumps(state.get("review_feedback", {}), indent=2)[:2000]
+    prior_feedback_text = format_prior_feedback(state, ENGINEER)
 
-    try:
-        result = run_structured_chain(
-            ENGINEER_PROMPT,
-            {
-                "paper_title":         state.get("paper_title", ""),
-                "analyst_synthesis":   sanitize_prompt_input(get_analyst_synthesis(state), 3000),
-                "theoretical_analysis": sanitize_prompt_input(state.get("theoretical_analysis", ""), 2000),
-                "codebase_structure":  sanitize_prompt_input(state.get("codebase_structure", ""), 3000),
-                "implementation_plan": sanitize_prompt_input(state.get("implementation_plan", ""), 2000),
-                "team_inbox":          sanitize_prompt_input(team_inbox, 2000),
-                "review_feedback":     sanitize_prompt_input(review_feedback, 2000),
-                "prior_feedback":      sanitize_prompt_input(format_prior_feedback(state, ENGINEER), 2500),
-                "current_file":        "ALL FILES",
-                "file_spec":           "Implement the complete codebase as designed.",
-                "security_instruction": CONTENT_DELIMITER_INSTRUCTION,
-            },
-            ENGINEER_MODEL,
-            EngineerOutput,
-        )
-        files = result.files
-        implementation_notes = result.implementation_notes
-        rev_message = result.message_to_reviewer
-        cro_message = result.message_to_cro
-    except StructuredOutputError as e:
-        print(f"   ⚠️  Structured output failed twice: {e}")
-        files = []
-        implementation_notes = f"[STRUCTURED OUTPUT FAILED after 2 attempts: {e}]"
-        rev_message, cro_message = "", str(e)
-
-    # Previously filenames were saved via os.path.basename(), silently
-    # flattening any subdirectory structure the Architect designed. Now
-    # sanitize_relative_path() preserves safe subdirectories.
     code_modules = dict(state.get("code_modules", {}))
-    for f in files:
-        safe_name = sanitize_relative_path(f.filename)
-        code_modules[safe_name] = {
-            "filename":    safe_name,
-            "language":    f.language or "python",
-            "code":        f.code,
-            "description": f.description or "Implemented by Senior ML Engineer",
-            "status":      "draft",
-        }
+    notes_per_batch = []
+    rev_messages, cro_messages = [], []
+    any_failure = False
+
+    for batch_idx, batch in enumerate(batches, start=1):
+        batch_filenames = {entry["filename"] for entry in batch}
+        current_file_text = "\n".join(f"- {f}" for f in sorted(batch_filenames))
+        file_spec_text = "\n".join(
+            f"- {e['filename']}: {e.get('description', '(no description given)')}" for e in batch
+        )
+        dependency_context = _build_dependency_context(code_modules, batch)
+        manifest_context = (
+            _build_manifest_context(manifest, code_modules, batch_filenames)
+            if manifest else "No manifest — implementing everything in one pass."
+        )
+
+        print(f"   💻 Pass {batch_idx}/{len(batches)}: {', '.join(sorted(batch_filenames))}")
+
+        try:
+            result = run_structured_chain(
+                ENGINEER_PROMPT,
+                {
+                    "paper_title":          state.get("paper_title", ""),
+                    "analyst_synthesis":    sanitize_prompt_input(get_analyst_synthesis(state), 3000),
+                    "theoretical_analysis": sanitize_prompt_input(state.get("theoretical_analysis", ""), 2000),
+                    "codebase_structure":   sanitize_prompt_input(state.get("codebase_structure", ""), 2000),
+                    "implementation_plan":  sanitize_prompt_input(state.get("implementation_plan", ""), 1500),
+                    "team_inbox":           sanitize_prompt_input(team_inbox, 1500),
+                    "review_feedback":      sanitize_prompt_input(review_feedback, 1500),
+                    "prior_feedback":       sanitize_prompt_input(prior_feedback_text, 2000),
+                    "dependency_context":   sanitize_prompt_input(dependency_context, ENGINEER_DEPENDENCY_CONTEXT_BUDGET),
+                    "manifest_context":     sanitize_prompt_input(manifest_context, 2000),
+                    "current_file":         current_file_text,
+                    "file_spec":            file_spec_text,
+                    "security_instruction": CONTENT_DELIMITER_INSTRUCTION,
+                },
+                ENGINEER_MODEL,
+                EngineerOutput,
+            )
+        except StructuredOutputError as e:
+            print(f"   ⚠️  Structured output failed twice for {', '.join(sorted(batch_filenames))}: {e}")
+            any_failure = True
+            cro_messages.append(f"Failed to implement {', '.join(sorted(batch_filenames))}: {e}")
+            continue
+
+        # Previously filenames were saved via os.path.basename(), silently
+        # flattening any subdirectory structure the Architect designed. Now
+        # sanitize_relative_path() preserves safe subdirectories.
+        for f in result.files:
+            safe_name = sanitize_relative_path(f.filename)
+            code_modules[safe_name] = {
+                "filename":    safe_name,
+                "language":    f.language or "python",
+                "code":        f.code,
+                "description": f.description or "Implemented by Senior ML Engineer",
+                "status":      "draft",
+            }
+        if result.implementation_notes:
+            notes_per_batch.append(f"[{', '.join(sorted(batch_filenames))}] {result.implementation_notes}")
+        if result.message_to_reviewer:
+            rev_messages.append(result.message_to_reviewer)
+        if result.message_to_cro:
+            cro_messages.append(result.message_to_cro)
+
+    implementation_notes = "\n\n".join(notes_per_batch)
+    if any_failure:
+        implementation_notes = f"[ONE OR MORE FILES FAILED STRUCTURED OUTPUT — see message_to_cro]\n\n{implementation_notes}"
 
     board = state.get("message_board", [])
-    if rev_message:
-        board = post_message({"message_board": board}, ENGINEER, REVIEWER, rev_message, "question")
-    if cro_message:
-        board = post_message({"message_board": board}, ENGINEER, CRO, cro_message, "concern")
+    if rev_messages:
+        board = post_message({"message_board": board}, ENGINEER, REVIEWER, "\n\n".join(rev_messages), "question")
+    if cro_messages:
+        board = post_message({"message_board": board}, ENGINEER, CRO, "\n\n".join(cro_messages), "concern")
 
     rc = increment_revision(state, ENGINEER)
     return {
         **state,
         "code_modules":         code_modules,
-        "implementation_notes": implementation_notes[:3000],
+        "implementation_notes": implementation_notes[:6000],
         "message_board":        board,
         "revision_counts":      rc,
     }

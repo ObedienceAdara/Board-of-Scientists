@@ -302,13 +302,14 @@ GPT/Claude; if this happens often, consider `LLM_PROVIDER=openrouter` or
 
 ## Known limitations not addressed in this pass
 
-These were flagged in the original audit but are out of scope for the five
-fixes above — noted here for transparency, not fixed:
+These were flagged in the original audit but were out of scope for the five
+fixes above. Two have since been addressed — see `FEATURES.md`:
 
-- The Engineer still generates the entire codebase in a single completion
-  rather than iterating file-by-file; for a large/complex paper this may
-  still hit the model's output length before finishing everything the
-  Architect specified.
-- The Analyst still hard-caps analysis at the first 40 pages of a paper.
+- ~~The Engineer still generates the entire codebase in a single completion~~
+  — fixed: the Engineer now iterates the Architect's file manifest one file
+  (or small group) at a time. See `FEATURES.md` #1.
+- ~~The Analyst still hard-caps analysis at the first 40 pages of a paper~~
+  — fixed: replaced with hierarchical map-reduce summarization with no hard
+  content cap. See `FEATURES.md` #2.
 - No automated test suite, CI, or LICENSE file exists for this project
-  itself.
+  itself. Still open.
