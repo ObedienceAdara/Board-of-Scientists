@@ -1,9 +1,4 @@
-"""Compatibility CLI/API launcher for Board of Scientists.
-
-The application implementation lives under ``board_of_scientists``. This file
-exists only so the established commands remain valid while the package layout
-becomes the canonical import surface.
-"""
+"""Compatibility CLI/API launcher for Board of Scientists."""
 
 from board_of_scientists.graph.workflow import app, run_research_team
 
