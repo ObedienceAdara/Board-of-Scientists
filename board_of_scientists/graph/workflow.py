@@ -1,19 +1,18 @@
 """Canonical LangGraph workflow for Board of Scientists.
 
-The workflow owns orchestration only: nodes live in ``graph.nodes`` and routing
-policy lives in ``graph.routers``. Agent behavior is supplied by the dedicated
-modules under ``board_of_scientists.agents``.
+The workflow owns orchestration only. Domain data is carried through the
+canonical ``ResearchState`` envelope; graph nodes own the projection to the
+current agent runtime representation.
 """
 
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from langgraph.graph import END, StateGraph
 from fastapi import FastAPI, Header, HTTPException
+from langgraph.graph import END, StateGraph
 from pydantic import BaseModel
 
-from ..agents.cro import cro_create_plan, cro_evaluate_agent, cro_final_verdict, cro_read_paper
 from ..agents.registry import (
     ANALYST,
     ARCHITECT,
@@ -23,7 +22,7 @@ from ..agents.registry import (
     THEORIST,
     WRITER,
 )
-from ..schemas.state import ResearchState
+from ..schemas.state import ResearchState, create_initial_state
 from .nodes import (
     node_analyst,
     node_architect,
@@ -83,55 +82,27 @@ def build_research_graph():
     graph.set_entry_point("analyst")
 
     graph.add_edge("analyst", "eval_analyst")
-    graph.add_conditional_edges(
-        "eval_analyst",
-        route_analyst,
-        {"analyst": "analyst", "cro_read": "cro_read"},
-    )
+    graph.add_conditional_edges("eval_analyst", route_analyst, {"analyst": "analyst", "cro_read": "cro_read"})
 
     graph.add_edge("cro_read", "theorist")
     graph.add_edge("theorist", "eval_theorist")
-    graph.add_conditional_edges(
-        "eval_theorist",
-        route_theorist,
-        {"theorist": "theorist", "architect": "architect"},
-    )
+    graph.add_conditional_edges("eval_theorist", route_theorist, {"theorist": "theorist", "architect": "architect"})
 
     graph.add_edge("architect", "eval_architect")
-    graph.add_conditional_edges(
-        "eval_architect",
-        route_architect,
-        {"architect": "architect", "cro_plan": "cro_plan"},
-    )
+    graph.add_conditional_edges("eval_architect", route_architect, {"architect": "architect", "cro_plan": "cro_plan"})
 
     graph.add_edge("cro_plan", "engineer")
     graph.add_edge("engineer", "eval_engineer")
-    graph.add_conditional_edges(
-        "eval_engineer",
-        route_engineer,
-        {"engineer": "engineer", "reviewer": "reviewer"},
-    )
+    graph.add_conditional_edges("eval_engineer", route_engineer, {"engineer": "engineer", "reviewer": "reviewer"})
 
     graph.add_edge("reviewer", "eval_reviewer")
-    graph.add_conditional_edges(
-        "eval_reviewer",
-        route_reviewer,
-        {"engineer": "engineer", "experiment": "experiment"},
-    )
+    graph.add_conditional_edges("eval_reviewer", route_reviewer, {"engineer": "engineer", "experiment": "experiment"})
 
     graph.add_edge("experiment", "eval_experiment")
-    graph.add_conditional_edges(
-        "eval_experiment",
-        route_experiment,
-        {"engineer": "engineer", "writer": "writer"},
-    )
+    graph.add_conditional_edges("eval_experiment", route_experiment, {"engineer": "engineer", "writer": "writer"})
 
     graph.add_edge("writer", "eval_writer")
-    graph.add_conditional_edges(
-        "eval_writer",
-        route_writer,
-        {"writer": "writer", "cro_verdict": "cro_verdict"},
-    )
+    graph.add_conditional_edges("eval_writer", route_writer, {"writer": "writer", "cro_verdict": "cro_verdict"})
 
     graph.add_edge("cro_verdict", "output")
     graph.add_edge("output", END)
@@ -142,44 +113,8 @@ research_graph = build_research_graph()
 
 
 def _initial_state(pdf_path: str) -> ResearchState:
-    """Create the complete initial state expected by the graph."""
-    return ResearchState(
-        pdf_path=pdf_path,
-        paper_title="",
-        paper_abstract="",
-        raw_pages=[],
-        full_paper_text="",
-        figures_summary="",
-        tables_summary="",
-        equations_summary="",
-        page_notes="",
-        page_notes_list=[],
-        theoretical_analysis="",
-        architecture_analysis="",
-        file_manifest=[],
-        cro_reading_notes="",
-        implementation_plan="",
-        codebase_structure="",
-        code_modules={},
-        review_feedback={},
-        review_summary="",
-        implementation_notes="",
-        execution_results="",
-        measured_validation={},
-        validation_report="",
-        discrepancies="",
-        readme="",
-        implementation_paper="",
-        message_board=[],
-        cro_directives={},
-        evaluations={},
-        revision_counts={},
-        needs_revision=[],
-        output_dir="",
-        pdf_report_path="",
-        final_verdict="",
-        research_report="",
-    )
+    """Create the canonical domain state for a new research run."""
+    return create_initial_state(pdf_path)
 
 
 def run_research_team(pdf_path: str) -> dict:
@@ -189,14 +124,17 @@ def run_research_team(pdf_path: str) -> dict:
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
     final_state = research_graph.invoke(_initial_state(str(path)))
+    communication = final_state["communication"]
+    implementation = final_state["implementation"]
+    output = final_state["output"]
     return {
-        "output_dir": final_state["output_dir"],
-        "pdf_report_path": final_state["pdf_report_path"],
-        "final_verdict": final_state["final_verdict"],
-        "paper_title": final_state["paper_title"],
-        "modules_count": len(final_state["code_modules"]),
-        "messages_count": len(final_state["message_board"]),
-        "revision_summary": final_state["revision_counts"],
+        "output_dir": output.output_dir,
+        "pdf_report_path": output.pdf_report_path,
+        "final_verdict": output.final_verdict,
+        "paper_title": final_state["research_input"].paper_title,
+        "modules_count": len(implementation.code_modules),
+        "messages_count": len(communication.message_board),
+        "revision_summary": communication.revision_counts,
     }
 
 
