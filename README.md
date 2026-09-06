@@ -2,7 +2,7 @@
 
 Board of Scientists is a multi-agent LangGraph system that takes a machine-learning research paper as input and drives it through paper analysis, theoretical interpretation, architecture design, iterative implementation, code review, execution-based validation, documentation, and a final research verdict.
 
-The application is organized as a Python package under `board_of_scientists/`. The implementation has been moved into the active package modules; the `_legacy` dependency boundary has been eliminated.
+The application is organized as a Python package under `board_of_scientists/` with explicit package boundaries and a composed domain state model.
 
 ## Current architecture
 
@@ -10,9 +10,9 @@ The application is organized as a Python package under `board_of_scientists/`. T
 board_of_scientists/
 │
 ├── graph/
-│   ├── workflow.py        # LangGraph topology, runner, REST API
+│   ├── workflow.py        # LangGraph topology + runner + REST API
 │   ├── routers.py         # Conditional routing policy
-│   └── nodes.py           # Graph-facing node adapters
+│   └── nodes.py           # Domain-state graph adapters
 │
 ├── agents/
 │   ├── analyst.py         # Paper analysis
@@ -38,26 +38,61 @@ board_of_scientists/
 ├── ingestion/
 │   ├── pdf.py             # PDF/page extraction
 │   ├── figures.py         # Figure discovery signals
-│   ├── equations.py       # Equation extraction boundary
+│   ├── equations.py       # Equation extraction
 │   └── tables.py          # Table discovery signals
 │
 ├── schemas/
 │   ├── agents.py          # Agent output contracts
 │   ├── evidence.py        # Evidence contracts
-│   └── state.py           # Shared LangGraph state contract
+│   └── state.py           # Domain models + LangGraph state envelope
 │
 ├── reports/
 │   ├── pdf.py             # PDF report generation
 │   └── provenance.py      # Artifact/message persistence
 │
-└── tests/                 # Architecture and regression tests
+└── tests/                 # Package architecture and domain regression tests
 ```
 
 A root `main.py` remains a thin compatibility launcher so the established CLI commands continue to work.
 
 ## Architectural migration status
 
-The Phase 0 `_legacy` migration is complete. Active package modules no longer import from `board_of_scientists._legacy`, and the archived implementation has been removed. Historical absolute-import compatibility is handled at the package boundary by mapping those names to active package modules.
+Phase 0 removed the archived implementation dependency. Phase 1 now defines and tests the package dependency DAG, and LangGraph carries a composed `ResearchState` rather than a flat bag of unrelated fields.
+
+The allowed application dependency direction is:
+
+```text
+graph    → agents, schemas, reports
+agents   → schemas, evidence, ingestion, execution
+reports  → schemas, evidence
+evidence → schemas
+ingestion → schemas
+execution → schemas
+schemas  → application packages
+```
+
+Forbidden reverse or lateral dependencies are enforced by `tests/test_architecture.py`.
+
+## Domain state
+
+The graph state is composed from explicit bounded contexts:
+
+```text
+ResearchState
+├── ResearchInput
+├── PaperCorpus
+├── AnalysisState
+├── ArchitectureState
+├── ImplementationState
+├── ValidationState
+├── EvidenceState
+├── CommunicationState
+└── OutputState
+```
+
+`graph/nodes.py` owns the only projection between this canonical domain model and the current behavior-preserving flat agent runtime. This keeps the LangGraph contract stable while individual agents can be migrated to domain-native inputs without another global state rewrite.
+
+See `docs/ARCHITECTURE.md` for the full dependency policy and design rules.
 
 ## Current limitations
 
@@ -70,6 +105,8 @@ Run the architecture and regression tests with:
 ```bash
 pytest
 ```
+
+The architecture suite checks the package import graph, verifies the intended directory structure, validates the composed domain-state shape, and tests round-trip conversion between canonical domain state and the current agent runtime representation.
 
 ## License
 
