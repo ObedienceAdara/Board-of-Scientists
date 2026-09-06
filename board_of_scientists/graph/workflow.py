@@ -1,10 +1,259 @@
-"""Canonical workflow boundary.
+"""Canonical LangGraph workflow for Board of Scientists.
 
-The graph is deliberately isolated from business logic. During this migration
-it delegates to the previously validated graph implementation kept under
-``_legacy.main``; the public entry point is now stable and can be split into
-nodes/routers without changing graph semantics.
+The workflow owns orchestration only: nodes live in ``graph.nodes`` and routing
+policy lives in ``graph.routers``. Agent behavior is supplied by the dedicated
+modules under ``board_of_scientists.agents``.
 """
-from board_of_scientists._legacy.main import build_research_graph, run_research_team, app
+
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+from langgraph.graph import END, StateGraph
+from fastapi import FastAPI, Header, HTTPException
+from pydantic import BaseModel
+
+from ..agents.cro import cro_create_plan, cro_evaluate_agent, cro_final_verdict, cro_read_paper
+from ..agents.registry import (
+    ANALYST,
+    ARCHITECT,
+    ENGINEER,
+    EXPERIMENT,
+    REVIEWER,
+    THEORIST,
+    WRITER,
+)
+from ..schemas.state import ResearchState
+from .nodes import (
+    node_analyst,
+    node_architect,
+    node_cro_plan,
+    node_cro_read,
+    node_cro_verdict,
+    node_engineer,
+    node_eval_analyst,
+    node_eval_architect,
+    node_eval_engineer,
+    node_eval_experiment,
+    node_eval_reviewer,
+    node_eval_theorist,
+    node_eval_writer,
+    node_experiment,
+    node_output,
+    node_reviewer,
+    node_theorist,
+    node_writer,
+)
+from .routers import (
+    route_analyst,
+    route_architect,
+    route_engineer,
+    route_experiment,
+    route_reviewer,
+    route_theorist,
+    route_writer,
+)
+
+load_dotenv()
+
+
+def build_research_graph():
+    """Compile the complete research implementation workflow."""
+    graph = StateGraph(ResearchState)
+
+    graph.add_node("analyst", node_analyst)
+    graph.add_node("eval_analyst", node_eval_analyst)
+    graph.add_node("cro_read", node_cro_read)
+    graph.add_node("theorist", node_theorist)
+    graph.add_node("eval_theorist", node_eval_theorist)
+    graph.add_node("architect", node_architect)
+    graph.add_node("eval_architect", node_eval_architect)
+    graph.add_node("cro_plan", node_cro_plan)
+    graph.add_node("engineer", node_engineer)
+    graph.add_node("eval_engineer", node_eval_engineer)
+    graph.add_node("reviewer", node_reviewer)
+    graph.add_node("eval_reviewer", node_eval_reviewer)
+    graph.add_node("experiment", node_experiment)
+    graph.add_node("eval_experiment", node_eval_experiment)
+    graph.add_node("writer", node_writer)
+    graph.add_node("eval_writer", node_eval_writer)
+    graph.add_node("cro_verdict", node_cro_verdict)
+    graph.add_node("output", node_output)
+
+    graph.set_entry_point("analyst")
+
+    graph.add_edge("analyst", "eval_analyst")
+    graph.add_conditional_edges(
+        "eval_analyst",
+        route_analyst,
+        {"analyst": "analyst", "cro_read": "cro_read"},
+    )
+
+    graph.add_edge("cro_read", "theorist")
+    graph.add_edge("theorist", "eval_theorist")
+    graph.add_conditional_edges(
+        "eval_theorist",
+        route_theorist,
+        {"theorist": "theorist", "architect": "architect"},
+    )
+
+    graph.add_edge("architect", "eval_architect")
+    graph.add_conditional_edges(
+        "eval_architect",
+        route_architect,
+        {"architect": "architect", "cro_plan": "cro_plan"},
+    )
+
+    graph.add_edge("cro_plan", "engineer")
+    graph.add_edge("engineer", "eval_engineer")
+    graph.add_conditional_edges(
+        "eval_engineer",
+        route_engineer,
+        {"engineer": "engineer", "reviewer": "reviewer"},
+    )
+
+    graph.add_edge("reviewer", "eval_reviewer")
+    graph.add_conditional_edges(
+        "eval_reviewer",
+        route_reviewer,
+        {"engineer": "engineer", "experiment": "experiment"},
+    )
+
+    graph.add_edge("experiment", "eval_experiment")
+    graph.add_conditional_edges(
+        "eval_experiment",
+        route_experiment,
+        {"engineer": "engineer", "writer": "writer"},
+    )
+
+    graph.add_edge("writer", "eval_writer")
+    graph.add_conditional_edges(
+        "eval_writer",
+        route_writer,
+        {"writer": "writer", "cro_verdict": "cro_verdict"},
+    )
+
+    graph.add_edge("cro_verdict", "output")
+    graph.add_edge("output", END)
+    return graph.compile()
+
+
 research_graph = build_research_graph()
+
+
+def _initial_state(pdf_path: str) -> ResearchState:
+    """Create the complete initial state expected by the graph."""
+    return ResearchState(
+        pdf_path=pdf_path,
+        paper_title="",
+        paper_abstract="",
+        raw_pages=[],
+        full_paper_text="",
+        figures_summary="",
+        tables_summary="",
+        equations_summary="",
+        page_notes="",
+        page_notes_list=[],
+        theoretical_analysis="",
+        architecture_analysis="",
+        file_manifest=[],
+        cro_reading_notes="",
+        implementation_plan="",
+        codebase_structure="",
+        code_modules={},
+        review_feedback={},
+        review_summary="",
+        implementation_notes="",
+        execution_results="",
+        measured_validation={},
+        validation_report="",
+        discrepancies="",
+        readme="",
+        implementation_paper="",
+        message_board=[],
+        cro_directives={},
+        evaluations={},
+        revision_counts={},
+        needs_revision=[],
+        output_dir="",
+        pdf_report_path="",
+        final_verdict="",
+        research_report="",
+    )
+
+
+def run_research_team(pdf_path: str) -> dict:
+    """Run the full research implementation workflow for a paper PDF."""
+    path = Path(pdf_path)
+    if not path.exists():
+        raise FileNotFoundError(f"PDF not found: {pdf_path}")
+
+    final_state = research_graph.invoke(_initial_state(str(path)))
+    return {
+        "output_dir": final_state["output_dir"],
+        "pdf_report_path": final_state["pdf_report_path"],
+        "final_verdict": final_state["final_verdict"],
+        "paper_title": final_state["paper_title"],
+        "modules_count": len(final_state["code_modules"]),
+        "messages_count": len(final_state["message_board"]),
+        "revision_summary": final_state["revision_counts"],
+    }
+
+
+class ImplementPaperRequest(BaseModel):
+    """REST request referencing a PDF already staged in UPLOADS_DIR."""
+
+    pdf_filename: str
+
+
+UPLOADS_DIR = os.path.realpath(os.getenv("UPLOADS_DIR", "./uploads"))
+API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN", "")
+app = FastAPI(
+    title="AI Research Implementation Team",
+    description="8-agent AI system that reads and implements ML research papers",
+    version="1.1.0",
+)
+
+
+@app.post("/implement-paper")
+def implement_paper(req: ImplementPaperRequest, x_api_key: str = Header(default="")):
+    """Run the workflow against a file contained in the configured upload directory."""
+    if API_AUTH_TOKEN and x_api_key != API_AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header.")
+
+    Path(UPLOADS_DIR).mkdir(parents=True, exist_ok=True)
+    safe_name = os.path.basename(req.pdf_filename)
+    resolved = os.path.realpath(os.path.join(UPLOADS_DIR, safe_name))
+    if not (resolved == UPLOADS_DIR or resolved.startswith(UPLOADS_DIR + os.sep)):
+        raise HTTPException(status_code=400, detail="Invalid pdf_filename.")
+    if not os.path.exists(resolved):
+        raise HTTPException(status_code=404, detail=f"No such file in uploads directory: {safe_name}")
+
+    try:
+        return run_research_team(resolved)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/")
+async def root():
+    """Return service metadata and the team roster."""
+    return {
+        "status": "running",
+        "system": "AI Research Implementation Team",
+        "team": [
+            "CRO (Dr. Aria Chen)",
+            "Paper Analyst (Dr. Marcus Webb)",
+            "Theorist (Prof. Elena Vasquez)",
+            "ML Architect (Dr. James Okafor)",
+            "Senior ML Engineer (Dr. Kai Nakamura)",
+            "Code Reviewer (Dr. Priya Sharma)",
+            "Experiment Engineer (Dr. Santiago Reyes)",
+            "Technical Writer (Dr. Amara Osei)",
+        ],
+        "usage": "POST /implement-paper with {'pdf_filename': '<name>'} for a file already placed in the uploads directory",
+        "docs": "/docs",
+    }
+
+
 __all__ = ["build_research_graph", "research_graph", "run_research_team", "app"]
