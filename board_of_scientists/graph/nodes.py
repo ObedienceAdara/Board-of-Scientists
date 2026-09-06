@@ -1,7 +1,9 @@
-"""LangGraph node functions.
+"""LangGraph node adapters.
 
-The node layer owns graph-facing adapters only. Business logic stays in the
-specialized agent, execution, ingestion, and reporting modules.
+Graph nodes speak the canonical nested ``ResearchState`` domain model. The
+current behavior-preserving agent implementation still uses a flat runtime
+mapping, so this module owns the only projection boundary between those two
+representations.
 """
 
 import json
@@ -25,83 +27,98 @@ from ..agents.cro import (
 from ..agents.registry import (
     ANALYST, THEORIST, ARCHITECT, ENGINEER, REVIEWER, EXPERIMENT, WRITER,
 )
-from ..schemas.state import ResearchState
+from ..schemas.state import ResearchState, from_runtime_state, to_runtime_state
 from ..reports.pdf import generate_implementation_report
 from ..reports.provenance import save_all_modules, save_message_board
 
 
+def _run_agent(agent, state: ResearchState) -> ResearchState:
+    """Invoke an agent behind the domain/runtime state boundary."""
+    runtime_state = to_runtime_state(state)
+    result = agent(runtime_state)
+    return from_runtime_state(result)
+
+
 def node_analyst(state):
-    return analyst_agent(state)
+    return _run_agent(analyst_agent, state)
 
 
 def node_cro_read(state):
-    return cro_read_paper(state)
+    return _run_agent(cro_read_paper, state)
 
 
 def node_theorist(state):
-    return theorist_agent(state)
+    return _run_agent(theorist_agent, state)
 
 
 def node_architect(state):
-    return architect_agent(state)
+    return _run_agent(architect_agent, state)
 
 
 def node_cro_plan(state):
-    return cro_create_plan(state)
+    return _run_agent(cro_create_plan, state)
 
 
 def node_engineer(state):
-    return engineer_agent(state)
+    return _run_agent(engineer_agent, state)
 
 
 def node_reviewer(state):
-    return reviewer_agent(state)
+    return _run_agent(reviewer_agent, state)
 
 
 def node_experiment(state):
-    return experiment_engineer_agent(state)
+    return _run_agent(experiment_engineer_agent, state)
 
 
 def node_writer(state):
-    return writer_agent(state)
+    return _run_agent(writer_agent, state)
 
 
 def node_cro_verdict(state):
-    return cro_final_verdict(state)
+    return _run_agent(cro_final_verdict, state)
+
+
+def _run_eval(state: ResearchState, agent_key: str, output_key: str) -> ResearchState:
+    runtime_state = to_runtime_state(state)
+    result = cro_evaluate_agent(runtime_state, agent_key, output_key)
+    return from_runtime_state(result)
 
 
 def node_eval_analyst(state):
-    return cro_evaluate_agent(state, ANALYST, "research_report")
+    return _run_eval(state, ANALYST, "research_report")
 
 
 def node_eval_theorist(state):
-    return cro_evaluate_agent(state, THEORIST, "theoretical_analysis")
+    return _run_eval(state, THEORIST, "theoretical_analysis")
 
 
 def node_eval_architect(state):
-    return cro_evaluate_agent(state, ARCHITECT, "architecture_analysis")
+    return _run_eval(state, ARCHITECT, "architecture_analysis")
 
 
 def node_eval_engineer(state):
-    return cro_evaluate_agent(state, ENGINEER, "implementation_notes")
+    return _run_eval(state, ENGINEER, "implementation_notes")
 
 
 def node_eval_reviewer(state):
-    return cro_evaluate_agent(state, REVIEWER, "review_summary")
+    return _run_eval(state, REVIEWER, "review_summary")
 
 
 def node_eval_experiment(state):
-    return cro_evaluate_agent(state, EXPERIMENT, "validation_report")
+    return _run_eval(state, EXPERIMENT, "validation_report")
 
 
 def node_eval_writer(state):
-    return cro_evaluate_agent(state, WRITER, "readme")
+    return _run_eval(state, WRITER, "readme")
 
 
 def node_output(state: ResearchState) -> ResearchState:
     """Persist generated artifacts and the final implementation report."""
+    runtime = to_runtime_state(state)
+
     paper_slug = (
-        state.get("paper_title", "paper")
+        runtime.get("paper_title", "paper")
         .lower()
         .replace(" ", "_")
         .replace("/", "_")[:40]
@@ -110,10 +127,10 @@ def node_output(state: ResearchState) -> ResearchState:
     output_dir = f"output_{paper_slug}_{timestamp}"
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-    saved = save_all_modules(output_dir, state.get("code_modules", {}))
-    board_path = save_message_board(output_dir, state.get("message_board", []))
+    save_all_modules(output_dir, runtime.get("code_modules", {}))
+    save_message_board(output_dir, runtime.get("message_board", []))
 
-    measured = state.get("measured_validation")
+    measured = runtime.get("measured_validation")
     measured_appendix = (
         json.dumps(measured, indent=2)
         if measured
@@ -121,42 +138,40 @@ def node_output(state: ResearchState) -> ResearchState:
     )
 
     sections = [
-        {"title": "Abstract & Overview", "content": state.get("paper_abstract", "")},
-        {"title": "CRO Reading Notes", "content": state.get("cro_reading_notes", "")},
-        {"title": "Theoretical Analysis", "content": state.get("theoretical_analysis", "")},
-        {"title": "Architecture Design", "content": state.get("architecture_analysis", "")},
-        {"title": "Implementation Plan", "content": state.get("implementation_plan", "")},
-        {"title": "Code Review Findings", "content": json.dumps(state.get("review_feedback", {}), indent=2)},
+        {"title": "Abstract & Overview", "content": runtime.get("paper_abstract", "")},
+        {"title": "CRO Reading Notes", "content": runtime.get("cro_reading_notes", "")},
+        {"title": "Theoretical Analysis", "content": runtime.get("theoretical_analysis", "")},
+        {"title": "Architecture Design", "content": runtime.get("architecture_analysis", "")},
+        {"title": "Implementation Plan", "content": runtime.get("implementation_plan", "")},
+        {"title": "Code Review Findings", "content": json.dumps(runtime.get("review_feedback", {}), indent=2)},
         {
             "title": "Validation Report (Experiment Engineer's analysis — see appendix for raw measurements)",
-            "content": state.get("validation_report", ""),
+            "content": runtime.get("validation_report", ""),
         },
         {
             "title": "Appendix: Raw Measured Execution Results (ground truth, not LLM-generated)",
             "content": measured_appendix,
         },
-        {"title": "CRO Final Verdict", "content": state.get("final_verdict", "")},
+        {"title": "CRO Final Verdict", "content": runtime.get("final_verdict", "")},
         {
             "title": "Team Communications Log",
-            "content": json.dumps(state.get("message_board", []), indent=2),
+            "content": json.dumps(runtime.get("message_board", []), indent=2),
         },
     ]
 
     pdf_path = os.path.join(output_dir, "implementation_report.pdf")
     generate_implementation_report(
         {
-            "paper_title": state.get("paper_title", "Research Paper"),
+            "paper_title": runtime.get("paper_title", "Research Paper"),
             "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "sections": sections,
         },
         pdf_path,
     )
 
-    return {
-        **state,
-        "output_dir": output_dir,
-        "pdf_report_path": pdf_path,
-    }
+    runtime["output_dir"] = output_dir
+    runtime["pdf_report_path"] = pdf_path
+    return from_runtime_state(runtime)
 
 
 __all__ = [
