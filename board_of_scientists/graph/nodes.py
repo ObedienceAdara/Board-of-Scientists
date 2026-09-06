@@ -27,9 +27,10 @@ from ..agents.cro import (
 from ..agents.registry import (
     ANALYST, THEORIST, ARCHITECT, ENGINEER, REVIEWER, EXPERIMENT, WRITER,
 )
-from ..schemas.state import ResearchState, from_runtime_state, to_runtime_state
+from ..schemas.state import ResearchState
 from ..reports.pdf import generate_implementation_report
 from ..reports.provenance import save_all_modules, save_message_board
+from .state_adapter import from_runtime_state, to_runtime_state
 
 
 def _run_agent(agent, state: ResearchState) -> ResearchState:
