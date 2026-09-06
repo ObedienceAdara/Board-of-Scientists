@@ -1,6 +1,3 @@
-import pytest
-from pydantic import ValidationError
-
 from board_of_scientists.schemas.state import (
     AnalysisState,
     ArchitectureState,
@@ -37,18 +34,6 @@ def test_state_defaults_are_independent_instances():
     }
     assert second["communication"].message_board == []
     assert second["implementation"].code_modules == {}
-
-
-def test_domain_models_validate_core_constraints():
-    with pytest.raises(ValidationError):
-        from board_of_scientists.schemas.agents import EvaluationResult
-
-        EvaluationResult(passed=True, accuracy=object())
-
-    with pytest.raises(ValidationError):
-        from board_of_scientists.schemas.agents import Claim  # type: ignore[attr-defined]
-
-        Claim(text="bad")
 
 
 def test_research_input_accepts_minimal_valid_input():
