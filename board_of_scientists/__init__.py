@@ -1,4 +1,4 @@
-"""Board of Scientists application package."""
+"""Board of Scientists application package.
 
 The package is the canonical application boundary. Subsystems are organized by
 responsibility: graph orchestration, agents, evidence, execution, ingestion,

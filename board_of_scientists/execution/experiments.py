@@ -1,3 +1,3 @@
-"""Experiment execution boundary."""
-from board_of_scientists._legacy.tools import run_codebase_validation, format_measured_results
-__all__ = ["run_codebase_validation","format_measured_results"]
+"""Execution and validation helpers."""
+from ._runtime import run_codebase_validation, format_measured_results
+__all__ = ["run_codebase_validation", "format_measured_results"]
