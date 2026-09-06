@@ -57,7 +57,7 @@ A root `main.py` remains a thin compatibility launcher so the established CLI co
 
 ## Architectural migration status
 
-The Phase 0 `_legacy` migration is complete. Active package modules no longer import from `board_of_scientists._legacy`, and the archived implementation has been removed. Historical absolute-import compatibility is currently handled at the package boundary by mapping those names to active package modules.
+The Phase 0 `_legacy` migration is complete. Active package modules no longer import from `board_of_scientists._legacy`, and the archived implementation has been removed. Historical absolute-import compatibility is handled at the package boundary by mapping those names to active package modules.
 
 ## Current limitations
 
