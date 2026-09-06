@@ -2,7 +2,7 @@
 
 Board of Scientists is a multi-agent LangGraph system that takes a machine-learning research paper as input and drives it through paper analysis, theoretical interpretation, architecture design, iterative implementation, code review, execution-based validation, documentation, and a final research verdict.
 
-The application is now organized as a Python package under `board_of_scientists/`. The previous monolithic implementation is retained in `board_of_scientists/_legacy/` as a compatibility archive while the public subsystem boundaries are migrated incrementally.
+The application is organized as a Python package under `board_of_scientists/`. The previous monolithic implementation has been moved into the active package modules; there is no archived implementation dependency.
 
 ## Current architecture
 
@@ -27,8 +27,8 @@ board_of_scientists/
 ├── evidence/
 │   ├── claims.py          # Claim/evidence primitives
 │   ├── equations.py       # Equation evidence primitives
-│   ├── traceability.py   # Source-to-implementation trace edges
-│   └── consistency.py     # Deterministic consistency checks / future global engine seam
+│   ├── traceability.py    # Source-to-implementation trace edges
+│   └── consistency.py     # Deterministic consistency checks / global engine seam
 │
 ├── execution/
 │   ├── sandbox.py         # Sandboxed generated-code execution
@@ -39,7 +39,7 @@ board_of_scientists/
 │   ├── pdf.py             # PDF/page extraction
 │   ├── figures.py         # Figure discovery signals
 │   ├── equations.py       # Equation extraction boundary
-│   └── tables.py          # Table discovery signals
+│   └── tables.py           # Table discovery signals
 │
 ├── schemas/
 │   ├── agents.py          # Agent output contracts
@@ -50,10 +50,10 @@ board_of_scientists/
 │   ├── pdf.py             # PDF report generation
 │   └── provenance.py      # Artifact/message persistence
 │
-└── _legacy/              # Transitional compatibility archive
+└── tests/                 # Architecture and regression tests
 ```
 
-A root `main.py` remains as a thin compatibility launcher, so existing commands continue to work.
+A root `main.py` remains a thin compatibility launcher so the established CLI commands continue to work.
 
 ## Workflow
 
@@ -119,22 +119,13 @@ CLI:
 python main.py path/to/paper.pdf
 ```
 
-The run produces an output directory containing generated source files, documentation, the team communication log, and `implementation_report.pdf`.
-
 REST API:
 
 ```bash
 python main.py serve
 ```
 
-Place a PDF in `UPLOADS_DIR` (default `./uploads`) and call:
-
-```bash
-curl -X POST http://localhost:8000/implement-paper \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $API_AUTH_TOKEN" \
-  -d '{"pdf_filename":"paper.pdf"}'
-```
+Place a PDF in `UPLOADS_DIR` (default `./uploads`) and call `POST /implement-paper` with the filename.
 
 ## Configuration
 
@@ -153,25 +144,21 @@ The main controls remain:
 
 Per-agent model overrides are available through `CRO_MODEL`, `ANALYST_MODEL`, `THEORIST_MODEL`, `ARCHITECT_MODEL`, `ENGINEER_MODEL`, `REVIEWER_MODEL`, `EXPERIMENT_MODEL`, and `WRITER_MODEL`.
 
-## What is migrated vs. transitional
+## Architectural migration status
 
-The new package layout is the canonical import surface and the root monoliths have been removed. For this first architectural migration, role modules and several subsystem adapters still reuse the previously validated implementation stored under `_legacy/`. This is intentional: it separates filesystem/module responsibilities first without simultaneously changing the scientific behavior of the pipeline.
-
-The next internal migration can replace those adapters one subsystem at a time, with regression tests proving behavior parity before each legacy component is deleted.
+The structural migration is complete for the `_legacy` dependency boundary. Agent, ingestion, execution, schema, and reporting responsibilities now resolve through active package modules. Temporary compatibility aliases exist only for historical absolute imports and point directly to those active modules.
 
 ## Current limitations
 
-The system still does not perform a full training-based reproduction of a paper's reported metrics. Figure understanding is currently limited to extracted metadata/signals rather than full visual reasoning. Global cross-report scientific consistency is represented by the new evidence subsystem but is not yet the complete contradiction/traceability engine. The sandbox is designed for semi-trusted generated code and is not a hard OS security boundary for adversarial payloads.
+The system still does not perform a full training-based reproduction of a paper's reported metrics. Figure understanding is currently limited to extracted metadata/signals rather than full visual reasoning. Global cross-report scientific consistency is represented by the evidence subsystem but is not yet the complete contradiction/traceability engine. The sandbox is designed for semi-trusted generated code and is not a hard OS security boundary for adversarial payloads.
 
 ## Development
 
-Run the architecture smoke tests with:
+Run the architecture and regression tests with:
 
 ```bash
 pytest
 ```
-
-The initial suite verifies that the requested package modules import and that the expected directory structure exists. More focused regression tests should be added as each legacy subsystem is replaced.
 
 ## License
 
