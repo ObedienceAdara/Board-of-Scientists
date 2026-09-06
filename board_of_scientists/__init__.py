@@ -1,12 +1,11 @@
-"""Board of Scientists application package.
+"""Board of Scientists application package."""
 
-This package is the canonical application boundary. Subsystems are organized by
+The package is the canonical application boundary. Subsystems are organized by
 responsibility: graph orchestration, agents, evidence, execution, ingestion,
 schemas, and reporting.
 
-A small compatibility alias table is retained for the relocated implementation's
-historical absolute imports. The aliases point to active package modules; there
-is no legacy implementation behind them.
+Compatibility aliases point historical absolute imports at active package
+implementations. No subsystem depends on an archived implementation.
 """
 
 from importlib import import_module
@@ -21,7 +20,7 @@ _COMPAT_IMPORTS = {
     "tools": "board_of_scientists.execution._runtime",
 }
 
-for _legacy_name, _module_path in _COMPAT_IMPORTS.items():
-    sys.modules.setdefault(_legacy_name, import_module(_module_path))
+for _name, _module_path in _COMPAT_IMPORTS.items():
+    sys.modules.setdefault(_name, import_module(_module_path))
 
 __all__ = ["graph", "agents", "evidence", "execution", "ingestion", "schemas", "reports"]
