@@ -1,8 +1,8 @@
 """Architecture invariants.
 
-These tests deliberately inspect source imports rather than executing the full
-application. That makes the dependency contract cheap, deterministic, and safe
-to run on every pull request.
+These tests inspect source imports rather than executing the full application.
+That makes the dependency contract cheap, deterministic, and safe to run on
+pull requests without LLM credentials.
 """
 
 from __future__ import annotations
@@ -13,8 +13,6 @@ from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).parents[1] / "board_of_scientists"
 
-# Hard package dependency DAG. A package may always import itself, but may not
-# import a package omitted from its allow-list.
 ALLOWED_IMPORTS = {
     "graph": {"graph", "agents", "schemas", "reports"},
     "agents": {"agents", "schemas", "evidence", "ingestion", "execution"},
@@ -49,9 +47,6 @@ FORBIDDEN_IMPORTS = {
 
 
 def _module_from_relative(current_package: str, level: int, module: str | None) -> str | None:
-    """Resolve a relative import to its top-level board package name."""
-    if level <= 0:
-        return None
     parts = current_package.split(".")
     base = parts[: len(parts) - (level - 1)]
     if module:
@@ -62,11 +57,12 @@ def _module_from_relative(current_package: str, level: int, module: str | None) 
 
 
 def _imported_packages(path: Path) -> set[str]:
-    source = path.read_text(encoding="utf-8")
-    tree = ast.parse(source, filename=str(path))
-    package = "board_of_scientists." + ".".join(path.relative_to(PACKAGE_ROOT).parts[:-1])
-    if package.endswith("."):
-        package = package[:-1]
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    relative = path.relative_to(PACKAGE_ROOT)
+    if relative.parts[:-1]:
+        package = "board_of_scientists." + ".".join(relative.parts[:-1])
+    else:
+        package = "board_of_scientists"
 
     imported: set[str] = set()
     for node in ast.walk(tree):
@@ -90,7 +86,7 @@ def test_dependency_dag_is_explicit_and_enforced():
     violations = []
     for path in PACKAGE_ROOT.rglob("*.py"):
         relative = path.relative_to(PACKAGE_ROOT)
-        package = relative.parts[0]
+        package = relative.parts[0] if len(relative.parts) > 1 else ""
         if package not in ALLOWED_IMPORTS:
             continue
         for imported in _imported_packages(path):
@@ -101,16 +97,16 @@ def test_dependency_dag_is_explicit_and_enforced():
     assert not violations, "\n".join(violations)
 
 
+def test_no_archived_package_reference_remains():
+    violations = []
+    for path in PACKAGE_ROOT.rglob("*.py"):
+        if "_legacy" in path.read_text(encoding="utf-8"):
+            violations.append(str(path.relative_to(PACKAGE_ROOT)))
+    assert not violations, "Archived implementation reference found:\n" + "\n".join(violations)
+
+
 def test_expected_directory_structure():
-    expected_dirs = {
-        "graph",
-        "agents",
-        "evidence",
-        "execution",
-        "ingestion",
-        "schemas",
-        "reports",
-    }
+    expected_dirs = {"graph", "agents", "evidence", "execution", "ingestion", "schemas", "reports"}
     actual = {path.name for path in PACKAGE_ROOT.iterdir() if path.is_dir() and path.name != "__pycache__"}
     assert expected_dirs <= actual
 
@@ -132,11 +128,8 @@ def test_domain_state_is_explicitly_bounded():
 
 
 def test_domain_state_round_trip_preserves_runtime_contract():
-    from board_of_scientists.schemas.state import (
-        create_initial_state,
-        from_runtime_state,
-        to_runtime_state,
-    )
+    from board_of_scientists.graph.state_adapter import from_runtime_state, to_runtime_state
+    from board_of_scientists.schemas.state import create_initial_state
 
     state = create_initial_state("paper.pdf")
     state["research_input"].paper_title = "Test Paper"
