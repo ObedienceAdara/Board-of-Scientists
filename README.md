@@ -50,7 +50,7 @@ board_of_scientists/
 │   ├── pdf.py             # PDF report generation
 │   └── provenance.py      # Artifact/message persistence
 │
-└── tests/                 # Package architecture and domain regression tests
+└── tests/                 # Unit, integration, graph, security, ingestion and evidence tests
 ```
 
 A root `main.py` remains a thin compatibility launcher so the established CLI commands continue to work.
@@ -58,6 +58,8 @@ A root `main.py` remains a thin compatibility launcher so the established CLI co
 ## Architectural migration status
 
 Phase 0 removed the archived implementation dependency. Phase 1 now defines and tests the package dependency DAG, and LangGraph carries a composed `ResearchState` rather than a flat bag of unrelated fields.
+
+Phase 2 establishes the automated testing foundation: deterministic unit tests, integration tests across subsystem seams, compiled-graph transition tests, security tests for the sandbox, ingestion/evidence coverage, reusable fixtures, and credential-free CI.
 
 The allowed application dependency direction is:
 
@@ -92,7 +94,24 @@ ResearchState
 
 `graph/nodes.py` owns the only projection between this canonical domain model and the current behavior-preserving flat agent runtime. This keeps the LangGraph contract stable while individual agents can be migrated to domain-native inputs without another global state rewrite.
 
-See `docs/ARCHITECTURE.md` for the full dependency policy and design rules.
+## Testing foundation
+
+The test pyramid lives under `tests/`:
+
+```text
+tests/
+├── unit/         # fast local contracts and pure functions
+├── integration/  # ingestion/state/sandbox/report subsystem seams
+├── graph/        # compiled LangGraph transitions and retry behavior
+├── security/     # sandbox policy and defensive controls
+├── ingestion/    # real PDF fixture parsing
+├── evidence/     # evidence-domain regression coverage
+└── fixtures/     # deterministic test-data factories
+```
+
+The suite does not require an API key. The structured-output path has a fake LLM test, and graph execution tests replace node behavior with deterministic state transitions while compiling the real workflow topology. GitHub Actions runs `pytest -q` on pushes to `main` and on pull requests with provider credentials empty by design.
+
+See `docs/TESTING.md` for the detailed testing strategy and scope boundaries.
 
 ## Current limitations
 
@@ -100,11 +119,13 @@ The system still does not perform a full training-based reproduction of a paper'
 
 ## Development
 
-Run the architecture and regression tests with:
+Run the complete deterministic test suite with:
 
 ```bash
-pytest
+pytest -q
 ```
+
+Targeted suites can be run independently, for example `pytest -q tests/unit`, `pytest -q tests/integration`, `pytest -q tests/graph`, or `pytest -q tests/security`.
 
 The architecture suite checks the package import graph, verifies the intended directory structure, validates the composed domain-state shape, and tests round-trip conversion between canonical domain state and the current agent runtime representation.
 
