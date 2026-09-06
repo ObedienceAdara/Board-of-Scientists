@@ -1,10 +1,30 @@
 """Claim extraction and normalization primitives."""
+
+from __future__ import annotations
+
+import re
 from typing import Literal
-from pydantic import BaseModel, Field
+
+from pydantic import BaseModel, Field, field_validator
+
+
+def normalize_claim_text(text: str) -> str:
+    """Normalize whitespace while preserving the claim's semantic wording."""
+    return re.sub(r"\s+", " ", str(text).strip())
+
+
 class Claim(BaseModel):
     id: str
     text: str
     source: str
-    kind: Literal["contribution","method","result","assumption","limitation","implementation"] = "method"
+    kind: Literal["contribution", "method", "result", "assumption", "limitation", "implementation"] = "method"
     evidence_level: int = Field(default=1, ge=0, le=7)
     references: list[str] = Field(default_factory=list)
+
+    @field_validator("text")
+    @classmethod
+    def _normalize_text(cls, value: str) -> str:
+        return normalize_claim_text(value)
+
+
+__all__ = ["Claim", "normalize_claim_text"]
