@@ -62,8 +62,7 @@ _runtime.cro_create_plan = cro_create_plan
 _runtime.cro_evaluate_agent = cro_evaluate_agent
 _runtime.cro_final_verdict = cro_final_verdict
 
-# Compatibility helper kept local to the agents package; graph/report code uses
-# the stronger reports.provenance implementation for actual persistence.
+
 def sanitize_relative_path(filename: str) -> str:
     if not isinstance(filename, str) or not filename.strip():
         raise ValueError("Artifact filename must be non-empty")
@@ -75,10 +74,45 @@ def sanitize_relative_path(filename: str) -> str:
         raise ValueError(f"Unsafe artifact path: {filename!r}")
     return "/".join(parts)
 
-_runtime.sanitize_relative_path = sanitize_relative_path
 
+def _safe_manifest(file_manifest):
+    """Sanitize an Architect manifest while rejecting only unsafe entries."""
+    seen = set()
+    sanitized = []
+    for spec in file_manifest:
+        raw = spec.model_dump() if hasattr(spec, "model_dump") else dict(spec)
+        try:
+            filename = sanitize_relative_path(raw.get("filename", ""))
+        except (TypeError, ValueError):
+            continue
+        if filename in seen:
+            continue
+        seen.add(filename)
+        sanitized.append({
+            "filename": filename,
+            "description": raw.get("description", ""),
+            "depends_on": list(raw.get("depends_on") or []),
+            "group": (raw.get("group") or "").strip(),
+        })
+    valid = {entry["filename"] for entry in sanitized}
+    for entry in sanitized:
+        clean_deps = []
+        for dep in entry["depends_on"]:
+            try:
+                dep = sanitize_relative_path(dep)
+            except (TypeError, ValueError):
+                continue
+            if dep in valid and dep != entry["filename"] and dep not in clean_deps:
+                clean_deps.append(dep)
+        entry["depends_on"] = clean_deps
+    return sanitized
+
+_runtime.sanitize_relative_path = sanitize_relative_path
+_runtime._sanitize_manifest = _safe_manifest
+
+_compat_tools = import_module("._compat_tools", __name__)
 for _name in ("save_all_modules", "save_code_file", "save_message_board"):
-    setattr(_runtime, _name, _compat_imports and getattr(import_module("._compat_tools", __name__), _name))
+    setattr(_runtime, _name, getattr(_compat_tools, _name))
 
 __all__ = [
     "analyst_agent", "theorist_agent", "architect_agent", "engineer_agent", "reviewer_agent",
