@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -19,16 +20,12 @@ from .nodes import (
     node_experiment, node_output, node_quality_gate_failed, node_reviewer,
     node_theorist, node_writer,
 )
-from .routers import (
-    route_analyst, route_architect, route_engineer, route_experiment,
-    route_reviewer, route_theorist, route_writer,
-)
+from .routers import route_analyst, route_architect, route_engineer, route_experiment, route_reviewer, route_theorist, route_writer
 
 load_dotenv()
 
 
 def build_research_graph():
-    """Compile the complete research implementation workflow."""
     graph = StateGraph(ResearchState)
     graph.add_node("analyst", node_analyst)
     graph.add_node("eval_analyst", node_eval_analyst)
@@ -52,35 +49,21 @@ def build_research_graph():
 
     graph.set_entry_point("analyst")
     graph.add_edge("analyst", "eval_analyst")
-    graph.add_conditional_edges("eval_analyst", route_analyst, {
-        "analyst": "analyst", "cro_read": "cro_read", "quality_gate_failed": "quality_gate_failed",
-    })
+    graph.add_conditional_edges("eval_analyst", route_analyst, {"analyst": "analyst", "cro_read": "cro_read", "quality_gate_failed": "quality_gate_failed"})
     graph.add_edge("cro_read", "theorist")
     graph.add_edge("theorist", "eval_theorist")
-    graph.add_conditional_edges("eval_theorist", route_theorist, {
-        "theorist": "theorist", "architect": "architect", "quality_gate_failed": "quality_gate_failed",
-    })
+    graph.add_conditional_edges("eval_theorist", route_theorist, {"theorist": "theorist", "architect": "architect", "quality_gate_failed": "quality_gate_failed"})
     graph.add_edge("architect", "eval_architect")
-    graph.add_conditional_edges("eval_architect", route_architect, {
-        "architect": "architect", "cro_plan": "cro_plan", "quality_gate_failed": "quality_gate_failed",
-    })
+    graph.add_conditional_edges("eval_architect", route_architect, {"architect": "architect", "cro_plan": "cro_plan", "quality_gate_failed": "quality_gate_failed"})
     graph.add_edge("cro_plan", "engineer")
     graph.add_edge("engineer", "eval_engineer")
-    graph.add_conditional_edges("eval_engineer", route_engineer, {
-        "engineer": "engineer", "reviewer": "reviewer", "quality_gate_failed": "quality_gate_failed",
-    })
+    graph.add_conditional_edges("eval_engineer", route_engineer, {"engineer": "engineer", "reviewer": "reviewer", "quality_gate_failed": "quality_gate_failed"})
     graph.add_edge("reviewer", "eval_reviewer")
-    graph.add_conditional_edges("eval_reviewer", route_reviewer, {
-        "engineer": "engineer", "experiment": "experiment", "quality_gate_failed": "quality_gate_failed",
-    })
+    graph.add_conditional_edges("eval_reviewer", route_reviewer, {"engineer": "engineer", "experiment": "experiment", "quality_gate_failed": "quality_gate_failed"})
     graph.add_edge("experiment", "eval_experiment")
-    graph.add_conditional_edges("eval_experiment", route_experiment, {
-        "engineer": "engineer", "writer": "writer", "quality_gate_failed": "quality_gate_failed",
-    })
+    graph.add_conditional_edges("eval_experiment", route_experiment, {"engineer": "engineer", "writer": "writer", "quality_gate_failed": "quality_gate_failed"})
     graph.add_edge("writer", "eval_writer")
-    graph.add_conditional_edges("eval_writer", route_writer, {
-        "writer": "writer", "cro_verdict": "cro_verdict", "quality_gate_failed": "quality_gate_failed",
-    })
+    graph.add_conditional_edges("eval_writer", route_writer, {"writer": "writer", "cro_verdict": "cro_verdict", "quality_gate_failed": "quality_gate_failed"})
     graph.add_edge("cro_verdict", "output")
     graph.add_edge("quality_gate_failed", "output")
     graph.add_edge("output", END)
@@ -95,13 +78,11 @@ def _initial_state(pdf_path: str) -> ResearchState:
 
 
 def run_research_team(pdf_path: str) -> dict:
-    """Run the full research implementation workflow for a validated PDF file."""
     path = Path(pdf_path).resolve()
     if not path.is_file():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
     if path.suffix.lower() != ".pdf":
         raise ValueError("Research input must be a .pdf file.")
-
     final_state = research_graph.invoke(_initial_state(str(path)))
     communication = final_state["communication"]
     implementation = final_state["implementation"]
@@ -124,13 +105,23 @@ class ImplementPaperRequest(BaseModel):
 UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "./uploads")).resolve()
 API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN", "").strip()
 APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+PDF_MAX_SIZE_BYTES = int(os.getenv("PDF_MAX_SIZE_MB", "50")) * 1024 * 1024
+
+job_manager = build_default_job_manager(run_research_team)
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    yield
+    job_manager.shutdown()
+
 
 app = FastAPI(
     title="AI Research Implementation Team",
     description="8-agent AI system that reads and implements ML research papers",
-    version="1.2.0",
+    version="1.3.0",
+    lifespan=_lifespan,
 )
-job_manager = build_default_job_manager(run_research_team)
 
 
 def _authorize(x_api_key: str) -> None:
@@ -150,12 +141,22 @@ def _resolve_upload(pdf_filename: str) -> Path:
         raise HTTPException(status_code=400, detail="Invalid pdf_filename.")
     if not resolved.is_file():
         raise HTTPException(status_code=404, detail=f"No such PDF in uploads directory: {safe_name}")
+    try:
+        size = resolved.stat().st_size
+        if size <= 0 or size > PDF_MAX_SIZE_BYTES:
+            raise HTTPException(status_code=413, detail=f"PDF exceeds configured size limit of {PDF_MAX_SIZE_BYTES // (1024 * 1024)} MB.")
+        with resolved.open("rb") as handle:
+            if handle.read(5) != b"%PDF-":
+                raise HTTPException(status_code=400, detail="Uploaded file is not a PDF.")
+    except HTTPException:
+        raise
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail="Could not inspect uploaded PDF.") from exc
     return resolved
 
 
 @app.post("/implement-paper", status_code=status.HTTP_202_ACCEPTED)
 def implement_paper(req: ImplementPaperRequest, x_api_key: str = Header(default="")):
-    """Queue a research run and return immediately with a job identifier."""
     _authorize(x_api_key)
     resolved = _resolve_upload(req.pdf_filename)
     try:
@@ -167,7 +168,6 @@ def implement_paper(req: ImplementPaperRequest, x_api_key: str = Header(default=
 
 @app.get("/jobs/{job_id}")
 def get_job(job_id: str, x_api_key: str = Header(default="")):
-    """Return status and result information for a submitted research job."""
     _authorize(x_api_key)
     job = job_manager.get(job_id)
     if job is None:
@@ -179,7 +179,7 @@ def get_job(job_id: str, x_api_key: str = Header(default="")):
         "started_at": job.started_at,
         "finished_at": job.finished_at,
         "result": job.result,
-        "error": job.error,
+        "error": None if APP_ENV == "production" and job.status == "failed" else job.error,
     }
 
 
