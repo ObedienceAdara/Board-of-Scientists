@@ -7,7 +7,6 @@ name = "board-of-scientists"
 version = "1.2.0"
 description = "AI research implementation team for reproducing machine-learning papers"
 requires-python = ">=3.11"
-dynamic = ["dependencies"]
 
 [tool.setuptools.packages.find]
 include = ["board_of_scientists*"]
