@@ -11,7 +11,7 @@ from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
 from ..schemas.state import ResearchState, create_initial_state
-from .job_manager import build_default_job_manager
+from .job_manager import JobQueueFullError, build_default_job_manager
 from .nodes import (
     node_analyst, node_architect, node_cro_plan, node_cro_read, node_cro_verdict,
     node_engineer, node_eval_analyst, node_eval_architect, node_eval_engineer,
@@ -158,7 +158,10 @@ def implement_paper(req: ImplementPaperRequest, x_api_key: str = Header(default=
     """Queue a research run and return immediately with a job identifier."""
     _authorize(x_api_key)
     resolved = _resolve_upload(req.pdf_filename)
-    job = job_manager.submit(str(resolved))
+    try:
+        job = job_manager.submit(str(resolved))
+    except JobQueueFullError as exc:
+        raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": "30"}) from exc
     return {"job_id": job.job_id, "status": job.status, "created_at": job.created_at, "status_url": f"/jobs/{job.job_id}"}
 
 
