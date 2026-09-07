@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "board-of-scientists"
+version = "1.2.0"
+description = "AI research implementation team for reproducing machine-learning papers"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[tool.setuptools.packages.find]
+include = ["board_of_scientists*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "unit: fast deterministic component tests",
+    "integration: tests spanning multiple application boundaries",
+    "graph: compiled LangGraph transition tests",
+    "security: sandbox and defensive-policy tests",
+]
