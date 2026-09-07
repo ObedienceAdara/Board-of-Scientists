@@ -1,10 +1,7 @@
-"""Specialized research-agent boundaries.
-
-Historical absolute imports inside ``_runtime`` are isolated to this adapter
-layer. Concrete capabilities are routed to their canonical package owners.
-"""
+"""Specialized research-agent boundaries."""
 
 from importlib import import_module
+from pathlib import PurePosixPath
 import sys
 
 _COMPAT_IMPORTS = {
@@ -39,8 +36,6 @@ for _name, _module_path in _COMPAT_IMPORTS.items():
 _runtime = import_module("._runtime", __name__)
 import_module("._runtime_hardening", __name__).install(_runtime)
 
-# Canonical subsystem implementations are rebound onto the historical runtime
-# names so production cannot silently fall back to duplicate helper versions.
 from ..ingestion.pdf import extract_pdf_pages, get_paper_metadata
 from ..ingestion.equations import extract_equations
 from ..execution.experiments import format_measured_results, run_codebase_validation
@@ -62,26 +57,28 @@ from .experiment import experiment_engineer_agent
 from .writer import writer_agent
 from .cro import cro_read_paper, cro_create_plan, cro_evaluate_agent, cro_final_verdict
 
-# Direct callers of the historical names receive the hardened CRO functions too.
 _runtime.cro_read_paper = cro_read_paper
 _runtime.cro_create_plan = cro_create_plan
 _runtime.cro_evaluate_agent = cro_evaluate_agent
 _runtime.cro_final_verdict = cro_final_verdict
 
-# Artifact persistence belongs to the graph/report boundary, not agents. These
-# old names are retained only so legacy imports fail explicitly instead of
-# introducing a reverse dependency from agents -> reports.
-def _artifact_persistence_removed(*_args, **_kwargs):
-    raise RuntimeError(
-        "Artifact persistence is graph-owned. Use board_of_scientists.reports.provenance instead."
-    )
+# Compatibility helper kept local to the agents package; graph/report code uses
+# the stronger reports.provenance implementation for actual persistence.
+def sanitize_relative_path(filename: str) -> str:
+    if not isinstance(filename, str) or not filename.strip():
+        raise ValueError("Artifact filename must be non-empty")
+    cleaned = filename.replace("\\", "/").strip()
+    if cleaned.startswith("/") or (len(cleaned) > 1 and cleaned[1] == ":"):
+        raise ValueError(f"Unsafe absolute artifact path: {filename!r}")
+    parts = [part for part in PurePosixPath(cleaned).parts if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        raise ValueError(f"Unsafe artifact path: {filename!r}")
+    return "/".join(parts)
 
-_runtime.save_all_modules = _artifact_persistence_removed
-_runtime.save_code_file = _artifact_persistence_removed
-_runtime.save_message_board = _artifact_persistence_removed
+_runtime.sanitize_relative_path = sanitize_relative_path
 
-from ..reports.provenance import sanitize_relative_path as _sanitize_relative_path
-_runtime.sanitize_relative_path = _sanitize_relative_path
+for _name in ("save_all_modules", "save_code_file", "save_message_board"):
+    setattr(_runtime, _name, _compat_imports and getattr(import_module("._compat_tools", __name__), _name))
 
 __all__ = [
     "analyst_agent", "theorist_agent", "architect_agent", "engineer_agent", "reviewer_agent",
