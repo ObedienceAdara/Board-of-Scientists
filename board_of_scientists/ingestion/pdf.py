@@ -1,8 +1,4 @@
-"""PDF ingestion primitives.
-
-PDF parsing belongs to the ingestion boundary. It must not depend on graph or
-execution orchestration.
-"""
+"""PDF ingestion primitives."""
 
 from __future__ import annotations
 
@@ -10,78 +6,75 @@ import re
 from typing import Any
 
 
+def _looks_like_equation(text: str) -> bool:
+    """Detect likely mathematical content without requiring literal equation labels."""
+    lower = text.lower()
+    if any(k in lower for k in ("equation", "eq.", "theorem", "proof", "lemma")):
+        return True
+    if re.search(r"(?:\b[A-Za-z][A-Za-z0-9_]*\b\s*=\s*[^=]+|\([^\d]{1,3}\))", text):
+        return True
+    return bool(re.search(r"[∑∫∂√∞≈≤≥→←×÷]", text))
+
+
+def _page_record(page_num: int, text: str, image_count: int, has_tables: bool = False) -> dict[str, Any]:
+    lower = text.lower()
+    return {
+        "page": page_num,
+        "text": text.strip(),
+        "has_figures": any(k in lower for k in ("figure", "fig.", "fig ")),
+        "has_tables": has_tables or any(k in lower for k in ("table", "tab.")),
+        "has_equations": _looks_like_equation(text),
+        "image_count": image_count,
+        "images": [f"[Image {i + 1} on page {page_num}]" for i in range(image_count)],
+        "char_count": len(text),
+    }
+
+
 def extract_pdf_pages(pdf_path: str) -> list[dict[str, Any]]:
     """Extract page-level text and lightweight structural signals from a PDF."""
-    pages: list[dict[str, Any]] = []
-
     try:
-        import fitz
-
-        doc = fitz.open(pdf_path)
+        import pymupdf
+        doc = pymupdf.open(pdf_path)
         try:
-            for page_num, page in enumerate(doc, start=1):
-                text = page.get_text("text") or ""
-                lower = text.lower()
-                images = page.get_images(full=True)
-                pages.append(
-                    {
-                        "page": page_num,
-                        "text": text.strip(),
-                        "has_figures": any(k in lower for k in ("figure", "fig.", "fig ")),
-                        "has_tables": any(k in lower for k in ("table", "tab.")),
-                        "has_equations": any(k in lower for k in ("equation", "eq.", "theorem", "proof", "lemma")),
-                        "image_count": len(images),
-                        "images": [f"[Image {i + 1} on page {page_num}]" for i in range(len(images))],
-                        "char_count": len(text),
-                    }
+            return [
+                _page_record(
+                    page_num,
+                    text := (page.get_text("text") or ""),
+                    len(page.get_images(full=True)),
                 )
+                for page_num, page in enumerate(doc, start=1)
+            ]
         finally:
             doc.close()
-        return pages
     except ImportError:
         pass
 
     try:
         import pdfplumber
-
+        pages = []
         with pdfplumber.open(pdf_path) as pdf:
             for page_num, page in enumerate(pdf.pages, start=1):
                 text = page.extract_text() or ""
-                lower = text.lower()
                 tables = page.extract_tables() or []
-                pages.append(
-                    {
-                        "page": page_num,
-                        "text": text.strip(),
-                        "has_figures": "figure" in lower or "fig." in lower,
-                        "has_tables": bool(tables),
-                        "has_equations": any(k in lower for k in ("equation", "theorem", "proof")),
-                        "image_count": 0,
-                        "images": [],
-                        "char_count": len(text),
-                    }
-                )
+                pages.append(_page_record(page_num, text, 0, bool(tables)))
         return pages
     except ImportError:
-        return [
-            {
-                "page": 1,
-                "text": f"[Could not extract PDF: {pdf_path}]",
-                "has_figures": False,
-                "has_tables": False,
-                "has_equations": False,
-                "image_count": 0,
-                "images": [],
-                "char_count": 0,
-            }
-        ]
+        return [{
+            "page": 1,
+            "text": f"[Could not extract PDF: {pdf_path}]",
+            "has_figures": False,
+            "has_tables": False,
+            "has_equations": False,
+            "image_count": 0,
+            "images": [],
+            "char_count": 0,
+        }]
 
 
 def get_paper_metadata(pages: list[dict[str, Any]]) -> dict[str, Any]:
     """Extract title, abstract, and likely section headings from page data."""
     if not pages:
         return {"title": "Unknown", "abstract": "", "sections": []}
-
     first_page_text = pages[0].get("text", "")
     lines = [line.strip() for line in first_page_text.splitlines() if line.strip()]
     title = lines[0] if lines else "Unknown Paper"
@@ -102,7 +95,6 @@ def get_paper_metadata(pages: list[dict[str, Any]]) -> dict[str, Any]:
             line = line.strip()
             if len(line) < 80 and heading_pattern.match(line):
                 sections.append({"page": page.get("page"), "heading": line})
-
     return {"title": title[:200], "abstract": abstract, "sections": sections[:30]}
 
 
