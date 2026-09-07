@@ -57,7 +57,12 @@ def node_architect(state):
 
 
 def node_cro_plan(state):
-    return _run_agent(cro_create_plan, state)
+    """Run the CRO planning step without destroying the Architect's design."""
+    architect_structure = state["architecture"].codebase_structure
+    result = _run_agent(cro_create_plan, state)
+    if architect_structure:
+        result["architecture"].codebase_structure = architect_structure
+    return result
 
 
 def node_engineer(state):
@@ -122,14 +127,19 @@ def node_output(state: ResearchState) -> ResearchState:
         runtime.get("paper_title", "paper")
         .lower()
         .replace(" ", "_")
-        .replace("/", "_")[:40]
+        .replace("/", "_")
+        .replace("\\", "_")
+        .replace("..", "_")[:40]
+        or "paper"
     )
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = f"output_{paper_slug}_{timestamp}"
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    output_root = Path(os.getenv("OUTPUT_DIR", ".")).resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+    output_dir = output_root / f"output_{paper_slug}_{timestamp}"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    save_all_modules(output_dir, runtime.get("code_modules", {}))
-    save_message_board(output_dir, runtime.get("message_board", []))
+    save_all_modules(str(output_dir), runtime.get("code_modules", {}))
+    save_message_board(str(output_dir), runtime.get("message_board", []))
 
     measured = runtime.get("measured_validation")
     measured_appendix = (
@@ -160,18 +170,18 @@ def node_output(state: ResearchState) -> ResearchState:
         },
     ]
 
-    pdf_path = os.path.join(output_dir, "implementation_report.pdf")
+    pdf_path = output_dir / "implementation_report.pdf"
     generate_implementation_report(
         {
             "paper_title": runtime.get("paper_title", "Research Paper"),
             "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "sections": sections,
         },
-        pdf_path,
+        str(pdf_path),
     )
 
-    runtime["output_dir"] = output_dir
-    runtime["pdf_report_path"] = pdf_path
+    runtime["output_dir"] = str(output_dir)
+    runtime["pdf_report_path"] = str(pdf_path)
     return from_runtime_state(runtime)
 
 
