@@ -1,35 +1,33 @@
 """Chief Research Officer agent operations.
 
-The CRO quality gate is implemented here rather than delegated to the legacy
-runtime bridge so evaluation failures cannot silently become approvals.
+The CRO quality gate is implemented here so evaluator failures can never
+silently become approvals.
 """
 
 from __future__ import annotations
+
+import os
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
 from ..schemas.agents import EvaluationResult
-from ._llm import LLMConfigError, make_llm
-from .prompts import CRO_EVALUATE_PROMPT, CRO_FINAL_VERDICT_PROMPT, CRO_IMPLEMENTATION_PLAN_PROMPT, CRO_READING_NOTES_PROMPT, CONTENT_DELIMITER_INSTRUCTION
-from .registry import ALL, ENGINEER, normalize_key, post_message if False else ALL
+from ._llm import default_model_for_provider, make_llm
+from .prompts import (
+    CONTENT_DELIMITER_INSTRUCTION,
+    CRO_EVALUATE_PROMPT,
+    CRO_FINAL_VERDICT_PROMPT,
+    CRO_IMPLEMENTATION_PLAN_PROMPT,
+    CRO_READING_NOTES_PROMPT,
+)
+from .registry import ALL, ENGINEER, normalize_key
+from ._runtime import increment_revision, post_message, run_chain
 
-# The runtime compatibility module owns shared message-board semantics for now;
-# importing only these helpers avoids using its evaluator implementation.
-from ._runtime import increment_revision, post_message, StructuredOutputError
-
-
-CRO_MODEL = ""
+CRO_MODEL = os.getenv("CRO_MODEL") or default_model_for_provider()
 
 
 def _model_name() -> str:
-    import os
-    from ._llm import default_model_for_provider
     return os.getenv("CRO_MODEL") or default_model_for_provider()
-
-
-def _prior_evaluation(state: dict, agent_key: str) -> dict:
-    return state.get("evaluations", {}).get(normalize_key(agent_key), {})
 
 
 def _run_structured(prompt_template: str, inputs: dict, schema):
@@ -70,8 +68,6 @@ def cro_evaluate_agent(state: dict, agent_key: str, output_key: str) -> dict:
         feedback = result.feedback
         issues = list(result.critical_issues)
     except Exception as exc:
-        # Evaluation uncertainty is never approval. Persist a failed gate so
-        # the graph's bounded retry/terminal policy can handle it explicitly.
         passed = False
         feedback = (
             "CRO evaluation was unavailable. This deliverable cannot be "
@@ -101,9 +97,8 @@ def cro_evaluate_agent(state: dict, agent_key: str, output_key: str) -> dict:
             f"Your output needs revision. Issues: {'; '.join(issues[:3])}. {feedback[:500]}",
             "feedback",
         )
-    else:
-        if agent_key in needs_revision:
-            needs_revision.remove(agent_key)
+    elif agent_key in needs_revision:
+        needs_revision.remove(agent_key)
 
     return {
         **state,
@@ -115,7 +110,6 @@ def cro_evaluate_agent(state: dict, agent_key: str, output_key: str) -> dict:
 
 def cro_read_paper(state: dict) -> dict:
     """Read the paper before the mathematical and architecture passes."""
-    from ._runtime import run_chain
     output = run_chain(
         CRO_READING_NOTES_PROMPT,
         {
@@ -125,16 +119,22 @@ def cro_read_paper(state: dict) -> dict:
         _model_name(),
     )
     board = post_message(
-        state, "cro", ALL,
+        state,
+        "cro",
+        ALL,
         "I have completed my initial reading of the paper. Theorist and Architect: begin your analyses in parallel. Pay special attention to the mathematical framework and proposed architecture.",
         "directive",
     )
-    return {**state, "cro_reading_notes": output, "message_board": board, "revision_counts": increment_revision(state, "cro")}
+    return {
+        **state,
+        "cro_reading_notes": output,
+        "message_board": board,
+        "revision_counts": increment_revision(state, "cro"),
+    }
 
 
 def cro_create_plan(state: dict) -> dict:
     """Create the master implementation plan without replacing Architect structure."""
-    from ._runtime import run_chain
     output = run_chain(
         CRO_IMPLEMENTATION_PLAN_PROMPT,
         {
@@ -147,7 +147,9 @@ def cro_create_plan(state: dict) -> dict:
         _model_name(),
     )
     board = post_message(
-        state, "cro", ENGINEER,
+        state,
+        "cro",
+        ENGINEER,
         "Implementation plan is ready. Begin with Phase A (core data structures). Follow the Architect's file manifest and architecture exactly. Tag me if the paper is ambiguous.",
         "directive",
     )
@@ -160,7 +162,6 @@ def cro_create_plan(state: dict) -> dict:
 
 def cro_final_verdict(state: dict) -> dict:
     """Issue a final CRO verdict using measured validation evidence."""
-    from ._runtime import run_chain
     modules = ", ".join(state.get("code_modules", {}).keys())
     output = run_chain(
         CRO_FINAL_VERDICT_PROMPT,
