@@ -1,16 +1,5 @@
-"""Traceability edges linking source evidence to implementation artifacts."""
-from pydantic import BaseModel, Field
+"""Traceability graph operations using schema-owned evidence contracts."""
 
-
-class TraceEdge(BaseModel):
-    source: str
-    relation: str
-    target: str
-    evidence: str = ""
-
-
-class TraceabilityGraph(BaseModel):
-    edges: list[TraceEdge] = Field(default_factory=list)
-
+from board_of_scientists.schemas.evidence import TraceEdge, TraceabilityGraph
 
 __all__ = ["TraceEdge", "TraceabilityGraph"]
