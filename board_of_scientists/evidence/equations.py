@@ -1,10 +1,5 @@
-"""Equation evidence primitives."""
-from pydantic import BaseModel, Field
-class EquationEvidence(BaseModel):
-    id: str
-    label: str = ""
-    expression: str
-    page: int | None = None
-    section: str = ""
-    role: str = ""
-    implementation_refs: list[str] = Field(default_factory=list)
+"""Equation evidence operations and schema re-export."""
+
+from board_of_scientists.schemas.evidence import EquationEvidence
+
+__all__ = ["EquationEvidence"]
