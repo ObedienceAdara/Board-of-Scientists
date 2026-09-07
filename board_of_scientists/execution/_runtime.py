@@ -17,9 +17,6 @@ from pathlib import Path, PurePosixPath
 from textwrap import dedent
 
 
-# Imports allowed to research code. Modules with direct filesystem/network or
-# process-control surfaces are excluded. Scientific libraries are allowed only
-# for in-memory computation; common file-loading APIs are rejected statically.
 ALLOWED_MODULES = frozenset({
     "math", "cmath", "decimal", "fractions", "random", "statistics",
     "itertools", "functools", "operator", "collections", "copy",
@@ -29,7 +26,6 @@ ALLOWED_MODULES = frozenset({
     "hashlib", "hmac", "secrets", "json", "csv", "contextlib", "ast",
     "numpy", "scipy", "torch", "torchvision", "tqdm", "matplotlib", "PIL",
     "sklearn", "pandas",
-    # Python import machinery required by normal imports.
     "_io", "_warnings", "_weakref", "_abc", "_codecs", "_collections_abc",
     "_frozen_importlib", "_frozen_importlib_external", "_imp", "_stat",
     "encodings", "errno", "genericpath", "posixpath", "ntpath", "stat",
@@ -48,7 +44,6 @@ BLOCKED_MODULES = frozenset({
 BLOCKED_BUILTINS = frozenset({
     "open", "input", "eval", "exec", "compile", "breakpoint", "exit", "quit", "help",
 })
-
 BLOCKED_CALL_NAMES = frozenset({
     "open", "eval", "exec", "compile", "__import__", "getattr", "setattr", "delattr",
     "vars", "dir", "globals", "locals", "memoryview", "breakpoint",
@@ -68,14 +63,12 @@ def _top_level(module: str) -> str:
 
 def _check_code_safety(code: str) -> list[str]:
     """AST-based rejection of imports, calls, and introspection with escape/file surfaces."""
-    violations: list[str] = []
     try:
         tree = ast.parse(code, filename="<sandbox>")
     except SyntaxError:
-        # Syntax errors are legitimate validation results and should reach the
-        # interpreter rather than be mislabeled as a security rejection.
         return []
 
+    violations: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -93,24 +86,20 @@ def _check_code_safety(code: str) -> list[str]:
         elif isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in BLOCKED_CALL_NAMES:
                 violations.append(f"Blocked call detected: {node.func.id}()")
-            elif isinstance(node.func, ast.Attribute):
-                if node.func.attr in BLOCKED_ATTRIBUTE_NAMES:
-                    violations.append(f"Blocked operation detected: .{node.func.attr}()")
-        elif isinstance(node, ast.Attribute):
-            if node.attr in BLOCKED_ATTRIBUTE_NAMES:
-                violations.append(f"Blocked attribute access detected: .{node.attr}")
+            elif isinstance(node.func, ast.Attribute) and node.func.attr in BLOCKED_ATTRIBUTE_NAMES:
+                violations.append(f"Blocked operation detected: .{node.func.attr}()")
+        elif isinstance(node, ast.Attribute) and node.attr in BLOCKED_ATTRIBUTE_NAMES:
+            violations.append(f"Blocked attribute access detected: .{node.attr}")
         elif isinstance(node, ast.Name) and node.id in {"__builtins__", "__import__"}:
             violations.append(f"Blocked builtin access detected: {node.id}")
 
-    # Keep the static checks deterministic and concise.
     return list(dict.fromkeys(violations))
 
 
 def _resource_setup_source(cpu_seconds: int, memory_bytes: int) -> str:
-    """Child-process setup that avoids unsafe ``preexec_fn`` in threaded parents."""
+    """Child-process setup without ``preexec_fn`` (safe when caller has threads)."""
     return dedent(
         f"""
-        import os as _os
         try:
             import resource as _resource
             _resource.setrlimit(_resource.RLIMIT_CPU, (max({int(cpu_seconds)}, 5), max({int(cpu_seconds)} + 2, 7)))
@@ -141,7 +130,6 @@ def _child_environment(project_dir: str | None, tmp_dir: str) -> dict[str, str]:
 
 
 def _kill_process_tree(proc: subprocess.Popen) -> None:
-    """Terminate the whole process group on POSIX, with a safe fallback."""
     try:
         if os.name == "posix":
             os.killpg(proc.pid, signal.SIGKILL)
@@ -175,8 +163,8 @@ def execute_python_code(code: str, timeout: int = 60, project_dir: str | None = 
         payload_path = os.path.join(tmp_dir, "payload.py")
         wrapper_path = os.path.join(tmp_dir, "run.py")
         Path(payload_path).write_text(code, encoding="utf-8")
-
         setup = _resource_setup_source(timeout, 4 * 1024 * 1024 * 1024)
+
         if trusted:
             wrapper = setup + f"""
 with open({payload_path!r}, 'r', encoding='utf-8') as _f:
@@ -184,9 +172,6 @@ with open({payload_path!r}, 'r', encoding='utf-8') as _f:
 exec(compile(_src, '<trusted>', 'exec'), {{'__name__': '__main__', '__file__': {payload_path!r}}})
 """
         else:
-            # The wrapper reads the payload before disabling file/process
-            # operations. open/exec/compile are patched in the execution
-            # namespace, while imports are checked by our guarded importer.
             allowed = repr(sorted(ALLOWED_MODULES))
             blocked = repr(sorted(BLOCKED_MODULES))
             blocked_builtins = repr(sorted(BLOCKED_BUILTINS))
@@ -215,11 +200,10 @@ for _name in {blocked_builtins}:
         setattr(_bt, _name, _blocked)
 with _real_open({payload_path!r}, 'r', encoding='utf-8') as _f:
     _src = _f.read()
-_globals = {{'__name__': '__main__', '__file__': {payload_path!r}}}
-_real_exec(_real_compile(_src, '<sandbox>', 'exec'), _globals)
+_real_exec(_real_compile(_src, '<sandbox>', 'exec'), {{'__name__': '__main__', '__file__': {payload_path!r}}})
 """
-        Path(wrapper_path).write_text(wrapper, encoding="utf-8")
 
+        Path(wrapper_path).write_text(wrapper, encoding="utf-8")
         proc = subprocess.Popen(
             [sys.executable, "-u", "-B", wrapper_path],
             stdout=subprocess.PIPE,
@@ -247,12 +231,7 @@ _real_exec(_real_compile(_src, '<sandbox>', 'exec'), _globals)
                 stdout = stdout.replace(secret, "[REDACTED]")
                 stderr = stderr.replace(secret, "[REDACTED]")
 
-        return {
-            "success": proc.returncode == 0,
-            "stdout": stdout[:6000],
-            "stderr": stderr[:3000],
-            "code": proc.returncode,
-        }
+        return {"success": proc.returncode == 0, "stdout": stdout[:6000], "stderr": stderr[:3000], "code": proc.returncode}
 
 
 _VALIDATION_SENTINEL = "===VALIDATION_RESULT_JSON==="
@@ -267,88 +246,138 @@ def run_codebase_validation(code_modules: dict, timeout: int = 90) -> dict:
         project_dir = os.path.realpath(project_dir)
         target_files: list[tuple[str, str]] = []
         for filename, module in code_modules.items():
-            # Execution owns sandboxing, but artifact path validation belongs
-            # to reports. For validation use a strict local sanitizer here.
             if not isinstance(filename, str):
                 continue
-            cleaned = filename.replace('\\', '/')
-            parts = [p for p in PurePosixPath(cleaned).parts if p not in ('', '.')]
-            if not parts or any(p == '..' for p in parts) or cleaned.startswith('/') or (len(cleaned) > 1 and cleaned[1] == ':'):
+            cleaned = filename.replace("\\", "/")
+            parts = [p for p in PurePosixPath(cleaned).parts if p not in ("", ".")]
+            if not parts or any(p == ".." for p in parts) or cleaned.startswith("/") or (len(cleaned) > 1 and cleaned[1] == ":"):
                 return {"measured": None, "error": f"Unsafe generated filename: {filename!r}", "raw_stdout": "", "raw_stderr": ""}
-            rel = '/'.join(parts)
-            if not rel.endswith('.py'):
+            rel = "/".join(parts)
+            if not rel.endswith(".py"):
                 continue
-            code = module.get('code', '') if isinstance(module, dict) else str(module)
+            code = module.get("code", "") if isinstance(module, dict) else str(module)
             full_path = os.path.join(project_dir, rel)
             Path(full_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(full_path).write_text(code, encoding='utf-8')
-            target_files.append((rel, rel[:-3].replace('/', '.')))
+            Path(full_path).write_text(code, encoding="utf-8")
+            target_files.append((rel, rel[:-3].replace("/", ".")))
 
         if not target_files:
             return {"measured": None, "error": "No .py files found among code_modules.", "raw_stdout": "", "raw_stderr": ""}
 
         for root, _dirs, files in os.walk(project_dir):
-            if root == project_dir or any(f.endswith('.py') for f in files):
-                Path(root, '__init__.py').touch(exist_ok=True)
+            if root == project_dir or any(f.endswith(".py") for f in files):
+                Path(root, "__init__.py").touch(exist_ok=True)
 
         harness = dedent(f"""
-            import ast, contextlib, importlib, inspect, io, json, os, sys, traceback
-            PROJECT_DIR = {project_dir!r}
+            import ast, builtins, contextlib, importlib, inspect, io, json, os, pathlib, sys, traceback
+            PROJECT_DIR = os.path.realpath({project_dir!r})
             TARGET_FILES = {target_files!r}
             results = {{}}
+            _real_import = builtins.__import__
+            _real_open = builtins.open
+            _allowed = set({sorted(ALLOWED_MODULES)!r})
+            _blocked = set({sorted(BLOCKED_MODULES)!r})
+            _blocked_builtins = set({sorted(BLOCKED_BUILTINS)!r})
+            _stdlib_root = os.path.realpath(os.path.dirname(os.__file__))
+            _prefix_root = os.path.realpath(sys.prefix)
+
+            def _inside(path, root):
+                path = os.path.realpath(path)
+                root = os.path.realpath(root)
+                return path == root or root in os.path.commonpath((path, root))
+
+            def _safe_open(file, mode='r', *args, **kwargs):
+                path = os.path.realpath(os.fspath(file))
+                write_mode = any(flag in mode for flag in ('w', 'a', 'x', '+'))
+                if not (_inside(path, PROJECT_DIR) or _inside(path, _stdlib_root) or _inside(path, _prefix_root)):
+                    raise PermissionError('Filesystem access outside the validation project/runtime is blocked.')
+                if write_mode and not _inside(path, PROJECT_DIR):
+                    raise PermissionError('Writes outside the validation project are blocked.')
+                return _real_open(file, mode, *args, **kwargs)
+
+            def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+                if level:
+                    return _real_import(name, globals, locals, fromlist, level)
+                top = name.split('.', 1)[0]
+                if top in _blocked or top not in _allowed:
+                    # Import machinery may legitimately request an internal
+                    # runtime module. Only allow it when it is a private
+                    # interpreter module already present in sys.modules.
+                    if name not in sys.modules or not top.startswith('_'):
+                        raise ImportError(f'Import of {{name}} is blocked in validation sandbox.')
+                return _real_import(name, globals, locals, fromlist, level)
+
+            def _blocked(*_args, **_kwargs):
+                raise PermissionError('Operation disabled during generated-code validation.')
+
+            builtins.__import__ = _guarded_import
+            builtins.open = _safe_open
+            for _name in _blocked_builtins:
+                if hasattr(builtins, _name):
+                    setattr(builtins, _name, _blocked)
+
             for rel_path, dotted in TARGET_FILES:
-                result = {{'syntax_ok': False, 'syntax_error': None, 'import_ok': False, 'import_error': None, 'classes_found': [], 'instantiation_attempts': []}}
+                entry = {{'syntax_ok': False, 'syntax_error': None, 'import_ok': False, 'import_error': None, 'classes_found': [], 'instantiation_attempts': []}}
                 full = os.path.join(PROJECT_DIR, rel_path)
-                source = open(full, 'r', encoding='utf-8').read()
                 try:
-                    ast.parse(source, filename=rel_path)
-                    result['syntax_ok'] = True
-                except SyntaxError as exc:
-                    result['syntax_error'] = f'{{type(exc).__name__}}: {{exc}}'
-                    results[rel_path] = result
-                    continue
-                try:
-                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                        module = importlib.import_module(dotted)
-                    result['import_ok'] = True
-                except Exception:
-                    result['import_error'] = traceback.format_exc()[-1500:]
-                    results[rel_path] = result
-                    continue
-                try:
-                    import torch
-                    import torch.nn as nn
-                    for name, obj in inspect.getmembers(module, inspect.isclass):
-                        if obj.__module__ != dotted:
-                            continue
-                        result['classes_found'].append(name)
-                        if issubclass(obj, nn.Module):
-                            attempt = {{'class': name, 'instantiated': False, 'forward_ok': False, 'error': None}}
-                            try:
-                                instance = obj()
-                                attempt['instantiated'] = True
-                                for shape in ((1, 16), (1, 3, 8, 8), (1, 8, 16)):
-                                    try:
-                                        instance(torch.randn(*shape))
-                                        attempt['forward_ok'] = True
-                                        attempt['tried_shape'] = list(shape)
-                                        break
-                                    except Exception:
-                                        pass
-                                if not attempt['forward_ok']:
-                                    attempt['error'] = 'No generic dummy input shape worked.'
-                            except Exception as exc:
-                                attempt['error'] = f'{{type(exc).__name__}}: {{exc}}'[:300]
-                            result['instantiation_attempts'].append(attempt)
-                except Exception:
-                    pass
-                results[rel_path] = result
-            summary = {{'python_version': sys.version.split()[0], 'torch_available': True, 'files_checked': len(TARGET_FILES), 'files_syntax_ok': sum(1 for x in results.values() if x['syntax_ok']), 'files_import_ok': sum(1 for x in results.values() if x['import_ok']), 'per_file': results}}
+                    source = _real_open(full, 'r', encoding='utf-8').read()
+                    try:
+                        ast.parse(source, filename=rel_path)
+                        entry['syntax_ok'] = True
+                    except SyntaxError as exc:
+                        entry['syntax_error'] = f'{{type(exc).__name__}}: {{exc}}'
+                        results[rel_path] = entry
+                        continue
+
+                    try:
+                        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                            module = importlib.import_module(dotted)
+                        entry['import_ok'] = True
+                    except Exception:
+                        entry['import_error'] = traceback.format_exc()[-1500:]
+                        results[rel_path] = entry
+                        continue
+
+                    try:
+                        import torch
+                        import torch.nn as nn
+                        for name, obj in inspect.getmembers(module, inspect.isclass):
+                            if obj.__module__ != dotted:
+                                continue
+                            entry['classes_found'].append(name)
+                            if issubclass(obj, nn.Module):
+                                attempt = {{'class': name, 'instantiated': False, 'forward_ok': False, 'error': None}}
+                                try:
+                                    instance = obj()
+                                    attempt['instantiated'] = True
+                                    for shape in ((1, 16), (1, 3, 8, 8), (1, 8, 16)):
+                                        try:
+                                            instance(torch.randn(*shape))
+                                            attempt['forward_ok'] = True
+                                            attempt['tried_shape'] = list(shape)
+                                            break
+                                        except Exception:
+                                            pass
+                                    if not attempt['forward_ok']:
+                                        attempt['error'] = 'No generic dummy input shape worked.'
+                                except Exception as exc:
+                                    attempt['error'] = f'{{type(exc).__name__}}: {{exc}}'[:300]
+                                entry['instantiation_attempts'].append(attempt)
+                    except Exception:
+                        pass
+                except Exception as exc:
+                    entry['import_error'] = f'Validation harness error: {{type(exc).__name__}}: {{exc}}'
+                results[rel_path] = entry
+
+            builtins.__import__ = _real_import
+            builtins.open = _real_open
+            summary = {{'python_version': sys.version.split()[0], 'torch_available': 'torch' in sys.modules, 'files_checked': len(TARGET_FILES), 'files_syntax_ok': sum(1 for x in results.values() if x['syntax_ok']), 'files_import_ok': sum(1 for x in results.values() if x['import_ok']), 'per_file': results}}
             print({ _VALIDATION_SENTINEL!r } + json.dumps(summary))
         """)
+
         executed = execute_python_code(harness, timeout=timeout, project_dir=project_dir, trusted=True)
         measured = None
-        for line in executed.get('stdout', '').splitlines():
+        for line in executed.get("stdout", "").splitlines():
             if line.startswith(_VALIDATION_SENTINEL):
                 try:
                     measured = json.loads(line[len(_VALIDATION_SENTINEL):])
@@ -356,18 +385,18 @@ def run_codebase_validation(code_modules: dict, timeout: int = 90) -> dict:
                     measured = None
                 break
         return {
-            'measured': measured,
-            'error': None if measured is not None else 'Validation harness did not produce parseable results.',
-            'raw_stdout': executed.get('stdout', ''),
-            'raw_stderr': executed.get('stderr', ''),
-            'harness_success': executed.get('success', False),
+            "measured": measured,
+            "error": None if measured is not None else "Validation harness did not produce parseable results.",
+            "raw_stdout": executed.get("stdout", ""),
+            "raw_stderr": executed.get("stderr", ""),
+            "harness_success": executed.get("success", False),
         }
 
 
 def format_measured_results(validation: dict) -> str:
-    measured = validation.get('measured')
+    measured = validation.get("measured")
     if measured is None:
-        return "MEASURED RESULTS: unavailable.\nReason: " + validation.get('error', 'unknown')
+        return "MEASURED RESULTS: unavailable.\nReason: " + validation.get("error", "unknown")
     lines = [
         f"Python version (measured): {measured['python_version']}",
         f"torch available (measured): {measured['torch_available']}",
