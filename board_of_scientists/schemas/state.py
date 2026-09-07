@@ -6,7 +6,8 @@ bounded contexts rather than one giant mutable bag of unrelated values.
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from typing import Any
+from typing_extensions import TypedDict
 
 from pydantic import BaseModel, Field
 
