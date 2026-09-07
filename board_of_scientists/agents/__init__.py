@@ -16,9 +16,6 @@ _COMPAT_IMPORTS = {
     "tools": "board_of_scientists.agents._compat_tools",
 }
 
-# Patch prompt constants before the legacy runtime imports them. Models must
-# never be instructed to fabricate external research, citations, or URLs when
-# no search result was supplied by the orchestration layer.
 _prompt_module = import_module(".prompts", __name__)
 _EXTERNAL_RESEARCH_GUARD = """
 
@@ -44,10 +41,30 @@ for _prompt_name in (
 for _name, _module_path in _COMPAT_IMPORTS.items():
     sys.modules.setdefault(_name, import_module(_module_path))
 
-# The imported runtime is now backed by canonical ingestion/execution/report
-# capabilities and bounded LLM retry/error semantics.
 _runtime = import_module("._runtime", __name__)
 import_module("._runtime_hardening", __name__).install(_runtime)
+
+# The legacy runtime defines a few helpers later in the file. Rebind those
+# globals to canonical implementations so production agents cannot bypass the
+# hardened report/path/execution owners by calling the shadowed definitions.
+from ..ingestion.pdf import extract_pdf_pages, get_paper_metadata
+from ..ingestion.equations import extract_equations
+from ..execution.experiments import format_measured_results, run_codebase_validation
+from ..execution.sandbox import execute_python_code
+from ..reports.pdf import generate_implementation_report
+from ..reports.provenance import save_all_modules, save_message_board, save_code_file, sanitize_relative_path
+
+_runtime.extract_pdf_pages = extract_pdf_pages
+_runtime.get_paper_metadata = get_paper_metadata
+_runtime.extract_equations = extract_equations
+_runtime.run_codebase_validation = run_codebase_validation
+_runtime.format_measured_results = format_measured_results
+_runtime.execute_python_code = execute_python_code
+_runtime.save_all_modules = save_all_modules
+_runtime.save_code_file = save_code_file
+_runtime.save_message_board = save_message_board
+_runtime.sanitize_relative_path = sanitize_relative_path
+_runtime.generate_implementation_report = generate_implementation_report
 
 from .analyst import analyst_agent
 from .theorist import theorist_agent
