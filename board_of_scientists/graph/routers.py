@@ -1,8 +1,4 @@
-"""Conditional routing policy for the LangGraph workflow.
-
-Routing reads only the ``CommunicationState`` domain object. It deliberately
-contains no agent implementation imports beyond the canonical identity registry.
-"""
+"""Conditional routing policy for the LangGraph workflow."""
 
 from ..agents.registry import (
     ANALYST,
@@ -15,41 +11,57 @@ from ..agents.registry import (
 )
 from ..schemas.state import ResearchState
 
+MAX_AGENT_REVISIONS = 3
+
 
 def _failed(state: ResearchState, name: str) -> bool:
     evaluations = state["communication"].evaluations
     return name in evaluations and not evaluations[name].get("passed", True)
 
 
+def _quality_gate_exhausted(state: ResearchState, name: str) -> bool:
+    """Never convert a maxed-out revision loop into an approval."""
+    revisions = state["communication"].revision_counts.get(name, 0)
+    evaluation = state["communication"].evaluations.get(name)
+    return bool(evaluation and revisions >= MAX_AGENT_REVISIONS)
+
+
+def _route(state: ResearchState, name: str, advance: str):
+    if _quality_gate_exhausted(state, name):
+        return "quality_gate_failed"
+    return name if _failed(state, name) else advance
+
+
 def route_analyst(state: ResearchState):
-    return "analyst" if _failed(state, ANALYST) else "cro_read"
+    return _route(state, ANALYST, "cro_read")
 
 
 def route_theorist(state: ResearchState):
-    return "theorist" if _failed(state, THEORIST) else "architect"
+    return _route(state, THEORIST, "architect")
 
 
 def route_architect(state: ResearchState):
-    return "architect" if _failed(state, ARCHITECT) else "cro_plan"
+    return _route(state, ARCHITECT, "cro_plan")
 
 
 def route_engineer(state: ResearchState):
-    return "engineer" if _failed(state, ENGINEER) else "reviewer"
+    return _route(state, ENGINEER, "reviewer")
 
 
 def route_reviewer(state: ResearchState):
-    return "engineer" if _failed(state, REVIEWER) else "experiment"
+    return _route(state, REVIEWER, "experiment")
 
 
 def route_experiment(state: ResearchState):
-    return "engineer" if _failed(state, EXPERIMENT) else "writer"
+    return _route(state, EXPERIMENT, "writer")
 
 
 def route_writer(state: ResearchState):
-    return "writer" if _failed(state, WRITER) else "cro_verdict"
+    return _route(state, WRITER, "cro_verdict")
 
 
 __all__ = [
+    "MAX_AGENT_REVISIONS",
     "route_analyst",
     "route_theorist",
     "route_architect",
