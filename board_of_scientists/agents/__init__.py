@@ -16,8 +16,38 @@ _COMPAT_IMPORTS = {
     "tools": "board_of_scientists.agents._compat_tools",
 }
 
+# Patch prompt constants before the legacy runtime imports them. Models must
+# never be instructed to fabricate external research, citations, or URLs when
+# no search result was supplied by the orchestration layer.
+_prompt_module = import_module(".prompts", __name__)
+_EXTERNAL_RESEARCH_GUARD = """
+
+SOURCE-BOUNDARY RULE:
+Use only evidence and references supplied in this prompt. Do not invent,
+guess, or fabricate papers, authors, DOIs, arXiv URLs, benchmark numbers,
+experimental results, or external citations. You do not have implicit web
+access. When an external fact is required but not supplied, explicitly mark it
+as [EXTERNAL-REFERENCE-REQUIRED] rather than making it up.
+"""
+for _prompt_name in (
+    "CRO_READING_NOTES_PROMPT",
+    "CRO_IMPLEMENTATION_PLAN_PROMPT",
+    "THEORIST_PROMPT",
+    "ARCHITECT_PROMPT",
+    "ENGINEER_PROMPT",
+    "REVIEWER_PROMPT",
+    "EXPERIMENT_ENGINEER_PROMPT",
+    "WRITER_PROMPT",
+):
+    setattr(_prompt_module, _prompt_name, getattr(_prompt_module, _prompt_name) + _EXTERNAL_RESEARCH_GUARD)
+
 for _name, _module_path in _COMPAT_IMPORTS.items():
     sys.modules.setdefault(_name, import_module(_module_path))
+
+# The imported runtime is now backed by canonical ingestion/execution/report
+# capabilities and bounded LLM retry/error semantics.
+_runtime = import_module("._runtime", __name__)
+import_module("._runtime_hardening", __name__).install(_runtime)
 
 from .analyst import analyst_agent
 from .theorist import theorist_agent
