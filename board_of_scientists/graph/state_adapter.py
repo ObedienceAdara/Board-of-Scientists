@@ -1,9 +1,4 @@
-"""Adapter between canonical domain state and the current agent runtime shape.
-
-This is intentionally a graph-layer concern: schemas define domain contracts;
-graph owns orchestration-specific projections needed by the current agent
-implementation. No agent or schema module should have to know this translation.
-"""
+"""Adapter between canonical domain state and the current agent runtime shape."""
 
 from __future__ import annotations
 
@@ -11,8 +6,11 @@ from typing import Any
 
 from ..schemas.state import ResearchState
 
-
 RuntimeResearchState = dict[str, Any]
+
+
+def _dump(value: Any) -> Any:
+    return value.model_dump() if hasattr(value, "model_dump") else value
 
 
 def to_runtime_state(state: ResearchState) -> RuntimeResearchState:
@@ -26,7 +24,6 @@ def to_runtime_state(state: ResearchState) -> RuntimeResearchState:
     ev = state["evidence"]
     co = state["communication"]
     out = state["output"]
-
     return {
         "pdf_path": ri.pdf_path,
         "paper_title": ri.paper_title,
@@ -53,10 +50,10 @@ def to_runtime_state(state: ResearchState) -> RuntimeResearchState:
         "measured_validation": va.measured_validation,
         "validation_report": va.validation_report,
         "discrepancies": va.discrepancies,
-        "claims": ev.claims,
-        "equations": ev.equations,
-        "traceability_edges": ev.traceability_edges,
-        "consistency_issues": ev.consistency_issues,
+        "claims": [_dump(x) for x in ev.claims],
+        "equations": [_dump(x) for x in ev.equations],
+        "traceability_edges": [_dump(x) for x in ev.traceability_edges],
+        "consistency_issues": [_dump(x) for x in ev.consistency_issues],
         "message_board": co.message_board,
         "cro_directives": co.cro_directives,
         "evaluations": co.evaluations,
@@ -73,35 +70,22 @@ def to_runtime_state(state: ResearchState) -> RuntimeResearchState:
 def from_runtime_state(runtime: RuntimeResearchState) -> ResearchState:
     """Rebuild canonical domain state from an agent-runtime result."""
     from ..schemas.state import (
-        AnalysisState,
-        ArchitectureState,
-        CommunicationState,
-        EvidenceState,
-        ImplementationState,
-        OutputState,
-        PaperCorpus,
-        ResearchInput,
-        ValidationState,
+        AnalysisState, ArchitectureState, CommunicationState, EvidenceState,
+        ImplementationState, OutputState, PaperCorpus, ResearchInput, ValidationState,
     )
-
     return {
         "research_input": ResearchInput(
-            pdf_path=runtime.get("pdf_path", ""),
-            paper_title=runtime.get("paper_title", ""),
+            pdf_path=runtime.get("pdf_path", ""), paper_title=runtime.get("paper_title", ""),
             paper_abstract=runtime.get("paper_abstract", ""),
         ),
         "paper_corpus": PaperCorpus(
-            raw_pages=runtime.get("raw_pages", []),
-            full_paper_text=runtime.get("full_paper_text", ""),
-            figures_summary=runtime.get("figures_summary", ""),
-            tables_summary=runtime.get("tables_summary", ""),
-            equations_summary=runtime.get("equations_summary", ""),
-            page_notes=runtime.get("page_notes", ""),
+            raw_pages=runtime.get("raw_pages", []), full_paper_text=runtime.get("full_paper_text", ""),
+            figures_summary=runtime.get("figures_summary", ""), tables_summary=runtime.get("tables_summary", ""),
+            equations_summary=runtime.get("equations_summary", ""), page_notes=runtime.get("page_notes", ""),
             page_notes_list=runtime.get("page_notes_list", []),
         ),
         "analysis": AnalysisState(
-            research_report=runtime.get("research_report", ""),
-            cro_reading_notes=runtime.get("cro_reading_notes", ""),
+            research_report=runtime.get("research_report", ""), cro_reading_notes=runtime.get("cro_reading_notes", ""),
             theoretical_analysis=runtime.get("theoretical_analysis", ""),
         ),
         "architecture": ArchitectureState(
@@ -111,35 +95,25 @@ def from_runtime_state(runtime: RuntimeResearchState) -> ResearchState:
             file_manifest=runtime.get("file_manifest", []),
         ),
         "implementation": ImplementationState(
-            code_modules=runtime.get("code_modules", {}),
-            review_feedback=runtime.get("review_feedback", {}),
-            review_summary=runtime.get("review_summary", ""),
-            implementation_notes=runtime.get("implementation_notes", ""),
+            code_modules=runtime.get("code_modules", {}), review_feedback=runtime.get("review_feedback", {}),
+            review_summary=runtime.get("review_summary", ""), implementation_notes=runtime.get("implementation_notes", ""),
         ),
         "validation": ValidationState(
-            execution_results=runtime.get("execution_results", ""),
-            measured_validation=runtime.get("measured_validation") or {},
-            validation_report=runtime.get("validation_report", ""),
-            discrepancies=runtime.get("discrepancies", ""),
+            execution_results=runtime.get("execution_results", ""), measured_validation=runtime.get("measured_validation") or {},
+            validation_report=runtime.get("validation_report", ""), discrepancies=runtime.get("discrepancies", ""),
         ),
         "evidence": EvidenceState(
-            claims=runtime.get("claims", []),
-            equations=runtime.get("equations", []),
-            traceability_edges=runtime.get("traceability_edges", []),
-            consistency_issues=runtime.get("consistency_issues", []),
+            claims=runtime.get("claims", []), equations=runtime.get("equations", []),
+            traceability_edges=runtime.get("traceability_edges", []), consistency_issues=runtime.get("consistency_issues", []),
         ),
         "communication": CommunicationState(
-            message_board=runtime.get("message_board", []),
-            cro_directives=runtime.get("cro_directives", {}),
-            evaluations=runtime.get("evaluations", {}),
-            revision_counts=runtime.get("revision_counts", {}),
+            message_board=runtime.get("message_board", []), cro_directives=runtime.get("cro_directives", {}),
+            evaluations=runtime.get("evaluations", {}), revision_counts=runtime.get("revision_counts", {}),
             needs_revision=runtime.get("needs_revision", []),
         ),
         "output": OutputState(
-            readme=runtime.get("readme", ""),
-            implementation_paper=runtime.get("implementation_paper", ""),
-            output_dir=runtime.get("output_dir", ""),
-            pdf_report_path=runtime.get("pdf_report_path", ""),
+            readme=runtime.get("readme", ""), implementation_paper=runtime.get("implementation_paper", ""),
+            output_dir=runtime.get("output_dir", ""), pdf_report_path=runtime.get("pdf_report_path", ""),
             final_verdict=runtime.get("final_verdict", ""),
         ),
     }
