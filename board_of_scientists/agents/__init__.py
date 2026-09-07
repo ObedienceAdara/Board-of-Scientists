@@ -1,9 +1,7 @@
 """Specialized research-agent boundaries.
 
-The current ``_runtime`` module still contains historical absolute imports.
-Install their compatibility aliases only when the agents boundary is loaded,
-so importing schemas, evidence, ingestion, or reports remains lightweight and
-side-effect free.
+Historical absolute imports inside ``_runtime`` are isolated to this adapter
+layer. Concrete capabilities are routed to their canonical package owners.
 """
 
 from importlib import import_module
@@ -15,7 +13,7 @@ _COMPAT_IMPORTS = {
     "prompts": "board_of_scientists.agents.prompts",
     "agent_registry": "board_of_scientists.agents.registry",
     "llm_provider": "board_of_scientists.agents._llm",
-    "tools": "board_of_scientists.execution._runtime",
+    "tools": "board_of_scientists.agents._compat_tools",
 }
 
 for _name, _module_path in _COMPAT_IMPORTS.items():
