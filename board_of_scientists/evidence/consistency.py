@@ -2,40 +2,28 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import defaultdict
 from typing import Iterable
 
-from board_of_scientists.schemas.evidence import TraceEdge
-
-
-@dataclass(frozen=True)
-class ConsistencyIssue:
-    severity: str
-    source: str
-    message: str
-    related: tuple[str, ...] = ()
+from board_of_scientists.schemas.evidence import ConsistencyIssue, TraceEdge
 
 
 def check_duplicate_trace_targets(edges: Iterable[TraceEdge]) -> list[ConsistencyIssue]:
-    """Find targets that are assigned incompatible relations."""
-    seen: dict[str, set[str]] = {}
-    sources: dict[tuple[str, str], str] = {}
+    """Find targets that receive incompatible relations."""
+    relations: dict[str, dict[str, str]] = defaultdict(dict)
     for edge in edges:
         relation = edge.relation.strip()
-        if not relation:
-            continue
-        seen.setdefault(edge.target, set()).add(relation)
-        sources[(edge.target, relation)] = edge.source
+        if relation:
+            relations[edge.target][relation] = edge.source
 
     issues: list[ConsistencyIssue] = []
-    for target, relations in seen.items():
-        if len(relations) > 1:
-            ordered = sorted(relations)
-            source = sources.get((target, ordered[0]), "traceability")
+    for target, rels in relations.items():
+        if len(rels) > 1:
+            ordered = sorted(rels)
             issues.append(
                 ConsistencyIssue(
                     severity="warning",
-                    source=source,
+                    source=rels[ordered[0]],
                     message=f"Conflicting relations for {target}: {', '.join(ordered)}",
                     related=(target, *ordered),
                 )
