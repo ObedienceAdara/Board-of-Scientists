@@ -1,8 +1,4 @@
-"""Domain state and LangGraph state contracts.
-
-The workflow carries one ``ResearchState`` object, but its fields are explicit
-bounded contexts rather than one giant mutable bag of unrelated values.
-"""
+"""Domain state and LangGraph state contracts."""
 
 from __future__ import annotations
 
@@ -10,6 +6,8 @@ from typing import Any
 from typing_extensions import TypedDict
 
 from pydantic import BaseModel, Field
+
+from .evidence import Claim, ConsistencyIssue, EquationEvidence, TraceEdge
 
 
 class PaperSection(TypedDict):
@@ -94,12 +92,12 @@ class ValidationState(BaseModel):
 
 
 class EvidenceState(BaseModel):
-    """Evidence artifacts available to future global scientific reasoning."""
+    """Typed evidence artifacts used by global scientific reasoning."""
 
-    claims: list[dict[str, Any]] = Field(default_factory=list)
-    equations: list[dict[str, Any]] = Field(default_factory=list)
-    traceability_edges: list[dict[str, Any]] = Field(default_factory=list)
-    consistency_issues: list[dict[str, Any]] = Field(default_factory=list)
+    claims: list[Claim] = Field(default_factory=list)
+    equations: list[EquationEvidence] = Field(default_factory=list)
+    traceability_edges: list[TraceEdge] = Field(default_factory=list)
+    consistency_issues: list[ConsistencyIssue] = Field(default_factory=list)
 
 
 class CommunicationState(BaseModel):
@@ -152,18 +150,8 @@ def create_initial_state(pdf_path: str) -> ResearchState:
 
 
 __all__ = [
-    "AgentMessage",
-    "AnalysisState",
-    "ArchitectureState",
-    "CodeModule",
-    "CommunicationState",
-    "create_initial_state",
-    "EvidenceState",
-    "OutputState",
-    "PaperCorpus",
-    "PaperSection",
-    "ResearchInput",
-    "ResearchState",
-    "ImplementationState",
-    "ValidationState",
+    "AgentMessage", "AnalysisState", "ArchitectureState", "CodeModule", "CommunicationState",
+    "ConsistencyIssue", "Claim", "create_initial_state", "EquationEvidence", "EvidenceState",
+    "OutputState", "PaperCorpus", "PaperSection", "ResearchInput", "ResearchState", "TraceEdge",
+    "ImplementationState", "ValidationState",
 ]
