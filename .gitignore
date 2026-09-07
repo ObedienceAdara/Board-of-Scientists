@@ -1,2 +1,10 @@
 .env
 commit-msg.txt
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.venv/
+venv/
+output_*/
+uploads/
+*.log
