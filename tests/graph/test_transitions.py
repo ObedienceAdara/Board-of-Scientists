@@ -57,13 +57,35 @@ def test_graph_executes_requested_retry_transition(monkeypatch, failed_eval, exp
     graph = build_research_graph()
     result = graph.invoke(create_initial_state("paper.pdf"))
 
-    # The run must pass through the failing evaluation, revisit the expected
-    # repair node, then continue beyond that evaluation into the normal path.
     first_eval = trace.index(failed_eval)
     assert trace[first_eval + 1] == expected_retry
     second_eval = trace.index(failed_eval, first_eval + 1)
     assert trace[second_eval + 1] == expected_next
     assert result["communication"].evaluations[AGENT_EVAL_NODES[failed_eval]]["passed"] is True
+
+
+def test_graph_exhausted_quality_gate_terminates_as_unresolved(monkeypatch):
+    trace = []
+
+    def analyst(state):
+        trace.append("analyst")
+        return state
+
+    def eval_analyst(state):
+        trace.append("eval_analyst")
+        state["communication"].evaluations["analyst"] = {"passed": True}
+        state["communication"].revision_counts["analyst"] = 3
+        return state
+
+    monkeypatch.setattr(workflow, "node_analyst", analyst)
+    monkeypatch.setattr(workflow, "node_eval_analyst", eval_analyst)
+    monkeypatch.setattr(workflow, "node_quality_gate_failed", lambda state: (
+        trace.append("quality_gate_failed") or state
+    ))
+    monkeypatch.setattr(workflow, "node_output", lambda state: trace.append("output") or state)
+
+    build_research_graph().invoke(create_initial_state("paper.pdf"))
+    assert trace == ["analyst", "eval_analyst", "quality_gate_failed", "output"]
 
 
 def test_graph_normal_path_reaches_output(monkeypatch):
@@ -87,6 +109,7 @@ def test_graph_normal_path_reaches_output(monkeypatch):
 
     for name in STAGE_NODES:
         monkeypatch.setattr(workflow, f"node_{name}", stage(name))
+    monkeypatch.setattr(workflow, "node_quality_gate_failed", stage("quality_gate_failed"))
     for name in AGENT_EVAL_NODES:
         monkeypatch.setattr(workflow, f"node_{name}", evaluation(name))
 
