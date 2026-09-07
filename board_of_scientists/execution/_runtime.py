@@ -189,7 +189,7 @@ def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
         raise ImportError('Relative imports are blocked in standalone sandbox execution.')
     top = name.split('.', 1)[0]
     if top in _blocked_modules or top not in _allowed:
-        raise ImportError(f'Import of {{name}} is blocked in this sandbox.')
+        raise ImportError('Import of ' + name + ' is blocked in this sandbox.')
     return _real_import(name, globals, locals, fromlist, level)
 
 def _blocked(*_a, **_k):
@@ -269,7 +269,7 @@ def run_codebase_validation(code_modules: dict, timeout: int = 90) -> dict:
                 Path(root, "__init__.py").touch(exist_ok=True)
 
         harness = dedent(f"""
-            import ast, builtins, contextlib, importlib, inspect, io, json, os, pathlib, sys, traceback
+            import ast, builtins, contextlib, importlib, inspect, io, json, os, sys, traceback
             PROJECT_DIR = os.path.realpath({project_dir!r})
             TARGET_FILES = {target_files!r}
             results = {{}}
@@ -300,11 +300,8 @@ def run_codebase_validation(code_modules: dict, timeout: int = 90) -> dict:
                     return _real_import(name, globals, locals, fromlist, level)
                 top = name.split('.', 1)[0]
                 if top in _blocked or top not in _allowed:
-                    # Import machinery may legitimately request an internal
-                    # runtime module. Only allow it when it is a private
-                    # interpreter module already present in sys.modules.
                     if name not in sys.modules or not top.startswith('_'):
-                        raise ImportError(f'Import of {{name}} is blocked in validation sandbox.')
+                        raise ImportError('Import of ' + name + ' is blocked in validation sandbox.')
                 return _real_import(name, globals, locals, fromlist, level)
 
             def _blocked(*_args, **_kwargs):
@@ -325,7 +322,7 @@ def run_codebase_validation(code_modules: dict, timeout: int = 90) -> dict:
                         ast.parse(source, filename=rel_path)
                         entry['syntax_ok'] = True
                     except SyntaxError as exc:
-                        entry['syntax_error'] = f'{{type(exc).__name__}}: {{exc}}'
+                        entry['syntax_error'] = type(exc).__name__ + ': ' + str(exc)
                         results[rel_path] = entry
                         continue
 
@@ -361,18 +358,18 @@ def run_codebase_validation(code_modules: dict, timeout: int = 90) -> dict:
                                     if not attempt['forward_ok']:
                                         attempt['error'] = 'No generic dummy input shape worked.'
                                 except Exception as exc:
-                                    attempt['error'] = f'{{type(exc).__name__}}: {{exc}}'[:300]
+                                    attempt['error'] = type(exc).__name__ + ': ' + str(exc)
                                 entry['instantiation_attempts'].append(attempt)
                     except Exception:
                         pass
                 except Exception as exc:
-                    entry['import_error'] = f'Validation harness error: {{type(exc).__name__}}: {{exc}}'
+                    entry['import_error'] = 'Validation harness error: ' + type(exc).__name__ + ': ' + str(exc)
                 results[rel_path] = entry
 
             builtins.__import__ = _real_import
             builtins.open = _real_open
             summary = {{'python_version': sys.version.split()[0], 'torch_available': 'torch' in sys.modules, 'files_checked': len(TARGET_FILES), 'files_syntax_ok': sum(1 for x in results.values() if x['syntax_ok']), 'files_import_ok': sum(1 for x in results.values() if x['import_ok']), 'per_file': results}}
-            print({ _VALIDATION_SENTINEL!r } + json.dumps(summary))
+            print({_VALIDATION_SENTINEL!r} + json.dumps(summary))
         """)
 
         executed = execute_python_code(harness, timeout=timeout, project_dir=project_dir, trusted=True)
